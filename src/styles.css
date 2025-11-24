@@ -1,0 +1,6 @@
+body{ font-family: Arial, Helvetica, sans-serif; margin:10px; width:300px;}
+.container h2{ margin:6px 0; font-size:16px;}
+#blockedList{ max-height:250px; overflow:auto; border:1px solid #ddd; padding:6px; background:#fafafa;}
+.blocked-item{ padding:6px; border-bottom:1px solid #eee; font-size:13px;}
+.blocked-item .meta{ color:#666; font-size:12px; }
+button{ margin-top:8px; padding:6px 8px; cursor:pointer; }

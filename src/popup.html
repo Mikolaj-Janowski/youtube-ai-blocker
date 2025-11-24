@@ -1,0 +1,21 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>YouTube AI Blocker</title>
+    <link rel="stylesheet" href="dist/styles.css" />
+  </head>
+  <body>
+    <div class="container">
+      <h2>YouTube AI Blocker</h2>
+      <div>
+        <label>Similarity threshold: <span id="thVal"></span></label>
+        <input type="range" id="threshold" min="0.6" max="0.95" step="0.01" />
+      </div>
+      <h3>Blocked Items</h3>
+      <div id="blockedList">Loading...</div>
+      <button id="clearAll">Clear All Blocks</button>
+    </div>
+    <script src="dist/popup.js"></script>
+  </body>
+</html>

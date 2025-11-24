@@ -1,0 +1,16 @@
+{
+  "name": "youtube-ai-blocker",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "esbuild src/content_script.js --bundle --outfile=dist/content_script.js --platform=browser --minify && esbuild src/popup.js --bundle --outfile=dist/popup.js --platform=browser --minify && cp src/popup.html dist/popup.html && cp src/styles.css dist/styles.css",
+    "watch": "esbuild src/content_script.js --bundle --outfile=dist/content_script.js --platform=browser --sourcemap --watch & esbuild src/popup.js --bundle --outfile=dist/popup.js --platform=browser --sourcemap --watch"
+  },
+  "dependencies": {
+    "@tensorflow-models/universal-sentence-encoder": "^1.3.3",
+    "@tensorflow/tfjs": "^4.0.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.18.0"
+  }
+}
