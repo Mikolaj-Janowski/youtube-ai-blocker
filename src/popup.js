@@ -1,25 +1,36 @@
-// popup.js
-const STORAGE_KEY = "ytd_ai_blocked_items_v1";
-const THRESHOLD_KEY = "ytd_ai_threshold_v1";
+// popup.js (upgraded)
+const STORAGE_KEY = "ytd_ai_blocked_items_v2";
+const THRESHOLD_KEY = "ytd_ai_threshold_v2";
+const CACHE_KEY = "ytd_ai_cache_v2";
+const NEGATIVE_KEY = "ytd_ai_negative_v2";
+const MODE_KEY = "ytd_ai_mode_v2";
+const BACKEND_KEY = "ytd_ai_backend_v2";
 const DEFAULT_THRESHOLD = 0.82;
+const DEFAULT_MODE = "local";
 
 document.addEventListener("DOMContentLoaded", async () => {
   const blockedList = document.getElementById("blockedList");
   const clearAllBtn = document.getElementById("clearAll");
   const thresholdInput = document.getElementById("threshold");
   const thVal = document.getElementById("thVal");
+  const clearCacheBtn = document.getElementById("clearCache");
+  const modeSelect = document.getElementById("mode");
+  const backendUrlInput = document.getElementById("backendUrl");
+  const backendRow = document.getElementById("backendRow");
 
-  // load threshold
-  chrome.storage.local.get([THRESHOLD_KEY, STORAGE_KEY], (data) => {
+  // load settings
+  chrome.storage.local.get([THRESHOLD_KEY, STORAGE_KEY, MODE_KEY, BACKEND_KEY], (data) => {
     const th = data[THRESHOLD_KEY] || DEFAULT_THRESHOLD;
     thresholdInput.value = th;
     thVal.innerText = th;
+    modeSelect.value = data[MODE_KEY] || DEFAULT_MODE;
+    backendUrlInput.value = data[BACKEND_KEY] || "";
     renderBlocked(data[STORAGE_KEY] || []);
+    backendRow.style.display = (modeSelect.value === "remote") ? "block" : "none";
   });
 
   thresholdInput.addEventListener("input", (e) => {
-    const v = parseFloat(e.target.value);
-    thVal.innerText = v;
+    thVal.innerText = e.target.value;
   });
 
   thresholdInput.addEventListener("change", (e) => {
@@ -27,14 +38,30 @@ document.addEventListener("DOMContentLoaded", async () => {
     chrome.storage.local.set({ [THRESHOLD_KEY]: v });
   });
 
+  modeSelect.addEventListener("change", () => {
+    const v = modeSelect.value;
+    chrome.storage.local.set({ [MODE_KEY]: v });
+    backendRow.style.display = (v === "remote") ? "block" : "none";
+  });
+
+  backendUrlInput.addEventListener("change", () => {
+    chrome.storage.local.set({ [BACKEND_KEY]: backendUrlInput.value || "" });
+  });
+
   clearAllBtn.addEventListener("click", () => {
-    if (!confirm("Clear all blocked items? This will remove saved examples.")) return;
+    if (!confirm("Clear all blocked items?")) return;
     chrome.storage.local.set({ [STORAGE_KEY]: [] }, () => {
       renderBlocked([]);
     });
   });
 
-  // storage change listener to update popup live
+  clearCacheBtn.addEventListener("click", () => {
+    if (!confirm("Clear embedding cache?")) return;
+    chrome.storage.local.set({ [CACHE_KEY]: {}, [NEGATIVE_KEY]: [] }, () => {
+      alert("Cache cleared.");
+    });
+  });
+
   chrome.storage.onChanged.addListener((changes) => {
     if (changes[STORAGE_KEY]) {
       renderBlocked(changes[STORAGE_KEY].newValue || []);
@@ -53,7 +80,6 @@ document.addEventListener("DOMContentLoaded", async () => {
       el.innerHTML = `<div><strong>${escapeHtml(it.title)}</strong></div><div class="meta">${escapeHtml(it.channel)}</div><div style="margin-top:6px;"><button data-id="${it.id}" class="removeBtn">Remove</button></div>`;
       blockedList.appendChild(el);
     });
-    // attach remove handlers
     blockedList.querySelectorAll(".removeBtn").forEach(btn => {
       btn.addEventListener("click", () => {
         const id = btn.getAttribute("data-id");

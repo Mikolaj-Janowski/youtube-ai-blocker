@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "YouTube AI Blocker (TF.js)",
-  "version": "0.1.0",
-  "description": "Block YouTube items using embeddings learned from your manual blocks (in-browser TF.js).",
+  "name": "YouTube AI Blocker (Upgraded)",
+  "version": "0.2.0",
+  "description": "AI-powered YouTube content filter — optimized (in-browser) with undo/feedback and optional backend.",
   "permissions": ["storage", "scripting", "activeTab"],
   "host_permissions": ["https://www.youtube.com/*"],
   "action": {

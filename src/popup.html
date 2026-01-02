@@ -8,13 +8,31 @@
   <body>
     <div class="container">
       <h2>YouTube AI Blocker</h2>
+
       <div>
+        <label>Mode:</label>
+        <select id="mode">
+          <option value="local">In-browser (TF.js)</option>
+          <option value="remote">Remote (backend)</option>
+        </select>
+      </div>
+
+      <div id="backendRow" style="margin-top:8px;">
+        <label>Backend URL:</label>
+        <input id="backendUrl" placeholder="http://localhost:8000" style="width:100%" />
+      </div>
+
+      <div style="margin-top:8px;">
         <label>Similarity threshold: <span id="thVal"></span></label>
         <input type="range" id="threshold" min="0.6" max="0.95" step="0.01" />
       </div>
+
       <h3>Blocked Items</h3>
       <div id="blockedList">Loading...</div>
       <button id="clearAll">Clear All Blocks</button>
+
+      <h3>Storage</h3>
+      <button id="clearCache">Clear Embedding Cache</button>
     </div>
     <script src="dist/popup.js"></script>
   </body>
