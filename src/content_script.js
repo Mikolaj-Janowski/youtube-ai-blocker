@@ -15,7 +15,7 @@ const THRESHOLD_KEY = "ytd_ai_threshold_v2";
 const MODE_KEY = "ytd_ai_mode_v2";             // 'local' or 'remote'
 const BACKEND_KEY = "ytd_ai_backend_v2";
 
-const DEFAULT_THRESHOLD = 0.82;
+const DEFAULT_THRESHOLD = 0.5;
 const EMBED_BATCH_SIZE = 8;  // batch size for embedding in local mode
 
 /* ---------------- Globals ---------------- */
@@ -32,6 +32,9 @@ let embedQueue = []; // queue of {text, resolve}
 
 // For debouncing DOM observer
 let mutateTimer = null;
+
+// Track recently unblocked tiles to avoid immediate re-blocking
+let recentlyUnblocked = new Set();
 
 /* ---------------- Helpers ---------------- */
 function cosineSimilarity(a, b) {
@@ -277,7 +280,17 @@ function observeViewportAndAttach(tiles) {
 }
 
 function attachButtonsToTile(tile) {
-  if (tile.querySelector(".ytd-ai-blocker-btn") || tile.querySelector(".ytd-ai-blocker-placeholder")) return;
+  // don't attach buttons to placeholders
+  if (tile.querySelector(".ytd-ai-blocker-placeholder")) return;
+
+  // don't re-process tiles that already have the button
+  if (tile.getAttribute("data-ytd-ai-processed") === "true") return;
+
+  // If a previous cloned button exists (from restored content), remove it so we can attach
+  // a fresh button with correct event handlers.
+  const existing = tile.querySelector(".ytd-ai-blocker-btn");
+  if (existing) existing.remove();
+
   const btn = createBlockButton();
   btn.onclick = async (e) => {
     e.stopPropagation();
@@ -305,6 +318,9 @@ function attachButtonsToTile(tile) {
     // fallback: append to tile
     tile.appendChild(btn);
   }
+
+  // Mark as processed to avoid duplicate button attachment
+  tile.setAttribute("data-ytd-ai-processed", "true");
 }
 
 function hideTileWithPlaceholder(tile, matchedId, matchedTitle, matchedChannel, matchedSim) {
@@ -319,10 +335,32 @@ function hideTileWithPlaceholder(tile, matchedId, matchedTitle, matchedChannel, 
   const negativeBtn = placeholder.querySelector(".ai-negative-btn");
 
   unblockBtn.addEventListener("click", () => {
+    // log for diagnostics
+    console.log("AI Blocker: 'Show this' clicked for", matchedTitle, "—", matchedChannel);
+
+    // temporarily prevent this exact tile from being immediately re-blocked
+    const key = getCacheKey(`${matchedTitle} — ${matchedChannel}`);
+    recentlyUnblocked.add(key);
+    setTimeout(() => recentlyUnblocked.delete(key), 60_000); // 60s grace
+
     // restore original content
     tile.innerHTML = "";
     for (const n of originalChildren) tile.appendChild(n);
     tile.style.display = originalDisplay;
+
+    // clear the processed flag so the tile can be re-processed
+    tile.removeAttribute("data-ytd-ai-processed");
+
+    // ensure UI buttons are re-attached for restored content
+    try { attachButtonsToTile(tile); } catch (err) { /* ignore */ }
+
+    // schedule a delayed re-scan for diagnostics and to let other logic settle
+    setTimeout(() => {
+      try {
+        console.log("AI Blocker: re-scanning tile after show-this");
+        scanAndMaybeHideTile(tile);
+      } catch (e) { /* ignore */ }
+    }, 800);
   });
 
   negativeBtn.addEventListener("click", async () => {
@@ -342,6 +380,9 @@ function hideTileWithPlaceholder(tile, matchedId, matchedTitle, matchedChannel, 
       tile.innerHTML = "";
       for (const n of originalChildren) tile.appendChild(n);
       tile.style.display = originalDisplay;
+
+      // clear the processed flag so the tile can be re-processed
+      tile.removeAttribute("data-ytd-ai-processed");
     } catch (err) {
       console.error("Failed to add negative:", err);
     }
@@ -354,10 +395,21 @@ function hideTileWithPlaceholder(tile, matchedId, matchedTitle, matchedChannel, 
 async function scanAndMaybeHideTile(tile) {
   try {
     const { titleText, channelText } = extractVideoInfoFromTile(tile);
-    // quick exact-match check
-    if (blockedItems.some(b => b.title === titleText || b.channel === channelText)) {
-      // find matched blocked item
-      const matched = blockedItems.find(b => b.title === titleText || b.channel === channelText);
+    const key = getCacheKey(`${titleText} — ${channelText}`);
+    // skip tiles the user just unblocked to avoid immediate re-blocking
+    if (recentlyUnblocked.has(key)) {
+      console.log("Skipping recently unblocked tile:", titleText);
+      return;
+    }
+
+    // skip tiles that already have a placeholder (already processed)
+    if (tile.querySelector(".ytd-ai-blocker-placeholder")) {
+      return;
+    }
+
+    // quick exact-match check (require same title AND same channel)
+    const matched = blockedItems.find(b => b.title === titleText && b.channel === channelText);
+    if (matched) {
       hideTileWithPlaceholder(tile, matched.id, matched.title, matched.channel, 1.0);
       return;
     }
