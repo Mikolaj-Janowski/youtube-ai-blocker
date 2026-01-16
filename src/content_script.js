@@ -15,7 +15,7 @@ const THRESHOLD_KEY = "ytd_ai_threshold_v2";
 const MODE_KEY = "ytd_ai_mode_v2";             // 'local' or 'remote'
 const BACKEND_KEY = "ytd_ai_backend_v2";
 
-const DEFAULT_THRESHOLD = 0.5;
+const DEFAULT_THRESHOLD = 0.2;
 const EMBED_BATCH_SIZE = 8;  // batch size for embedding in local mode
 
 /* ---------------- Globals ---------------- */
@@ -72,6 +72,13 @@ async function loadState() {
 async function ensureModel() {
   if (mode === "remote") return;
   if (!model) {
+    // Suppress platform warning by setting backend explicitly once
+    try {
+      await tf.setBackend("webgl").then(() => tf.ready());
+    } catch (e) {
+      // If WebGL fails, TF.js will fall back to CPU automatically
+      await tf.ready();
+    }
     model = await use.load();
     await model.embed(["init"]);
     console.log("USE model loaded (local)");
