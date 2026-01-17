@@ -1,6 +1,6 @@
 // content_script.js (upgraded)
 // In-browser optimized content script for YouTube AI blocker.
-// Supports: TF.js USE (local) OR remote backend embeddings.
+// Supports: ONNX (local) OR remote backend embeddings.
 // Features: embedding cache, intersection-only embedding, batching, debounce,
 // placeholder UI with Undo / "Not similar" feedback (negative examples).
 

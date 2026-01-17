@@ -2,7 +2,10 @@
 // Offscreen document for ONNX model inference
 // Runs in a proper DOM context with full API access (including Atomics.wait)
 
-import { pipeline } from "@xenova/transformers";
+import { env, pipeline } from "@xenova/transformers";
+
+// Configure local model path for @xenova/transformers
+env.localModelPath = chrome.runtime.getURL("dist/models/");
 
 let extractor = null;
 let modelReady = false;
