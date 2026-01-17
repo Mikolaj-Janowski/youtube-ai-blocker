@@ -4,19 +4,28 @@
   "version": "0.2.0",
   "description": "AI-powered YouTube content filter — optimized (in-browser) with undo/feedback and optional backend.",
   "permissions": ["storage", "scripting", "activeTab"],
-  "host_permissions": ["https://www.youtube.com/*"],
+  "host_permissions": [
+    "https://www.youtube.com/*",
+    "https://huggingface.co/*",
+    "https://cdn-lfs.huggingface.co/*",
+    "https://huggingface-cdn.space/*",
+    "https://*.huggingface.co/*",
+    "https://models.huggingface.co/*"
+  ],
   "action": {
     "default_popup": "dist/popup.html",
     "default_title": "YouTube AI Blocker"
   },
   "background": {
-    "service_worker": "dist/background.js"
+    "service_worker": "dist/background.js",
+    "type": "module"
   },
   "content_scripts": [
     {
       "matches": ["https://www.youtube.com/*"],
       "js": ["dist/content_script.js"],
-      "run_at": "document_idle"
+      "run_at": "document_idle",
+      "type": "module"
     }
   ],
   "web_accessible_resources": [

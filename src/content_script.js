@@ -4,8 +4,8 @@
 // Features: embedding cache, intersection-only embedding, batching, debounce,
 // placeholder UI with Undo / "Not similar" feedback (negative examples).
 
-import * as tf from "@tensorflow/tfjs";
-import * as use from "@tensorflow-models/universal-sentence-encoder";
+// Content script delegates embedding to background worker
+// This avoids CORS/network restrictions in content scripts
 
 /* ---------------- Configuration keys ---------------- */
 const STORAGE_KEY = "ytd_ai_blocked_items_v2"; // blocked positives
@@ -15,11 +15,11 @@ const THRESHOLD_KEY = "ytd_ai_threshold_v2";
 const MODE_KEY = "ytd_ai_mode_v2";             // 'local' or 'remote'
 const BACKEND_KEY = "ytd_ai_backend_v2";
 
-const DEFAULT_THRESHOLD = 0.2;
+const DEFAULT_THRESHOLD = 0.7;
 const EMBED_BATCH_SIZE = 8;  // batch size for embedding in local mode
 
 /* ---------------- Globals ---------------- */
-let model = null;
+let extractor = null; // Not used - delegated to background worker
 let blockedItems = []; // {id, title, channel, embedding}
 let negativeItems = []; // {id, title, channel, embedding}
 let cache = {}; // persistent cache loaded from storage (title->embedding array)
@@ -68,30 +68,24 @@ async function loadState() {
   }
 }
 
-/* ---------------- TF.js model loader ---------------- */
+/* ---------------- MiniLM-L6-v2 model loader (in background worker) ---------------- */
 async function ensureModel() {
-  if (mode === "remote") return;
-  if (!model) {
-    // Suppress platform warning by setting backend explicitly once
-    try {
-      await tf.setBackend("webgl").then(() => tf.ready());
-    } catch (e) {
-      // If WebGL fails, TF.js will fall back to CPU automatically
-      await tf.ready();
-    }
-    model = await use.load();
-    await model.embed(["init"]);
-    console.log("USE model loaded (local)");
-  }
+  // Model is loaded in background worker - content script just delegates
+  // No action needed here
 }
 
-/* ---------------- Embedding APIs ---------------- */
+/* ---------------- Embedding APIs (delegated to background worker) ---------------- */
 async function embedLocalBatch(texts) {
-  await ensureModel();
-  const embeddings = await model.embed(texts); // tf.Tensor [N, dim]
-  const arr = await embeddings.array();
-  embeddings.dispose();
-  return arr; // array of arrays
+  // Content script delegates to background worker to avoid CORS restrictions
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage({ action: "embed", texts }, (response) => {
+      if (response.error) {
+        reject(new Error(response.error));
+      } else {
+        resolve(response.embeddings);
+      }
+    });
+  });
 }
 
 async function embedRemote(text) {
@@ -403,13 +397,14 @@ async function scanAndMaybeHideTile(tile) {
   try {
     const { titleText, channelText } = extractVideoInfoFromTile(tile);
     const key = getCacheKey(`${titleText} — ${channelText}`);
+    
     // skip tiles the user just unblocked to avoid immediate re-blocking
     if (recentlyUnblocked.has(key)) {
       console.log("Skipping recently unblocked tile:", titleText);
       return;
     }
 
-    // skip tiles that already have a placeholder (already processed)
+    // skip tiles that already have a placeholder (already processed and blocked)
     if (tile.querySelector(".ytd-ai-blocker-placeholder")) {
       return;
     }
@@ -421,6 +416,7 @@ async function scanAndMaybeHideTile(tile) {
       return;
     }
 
+    // Check similarity-based blocking
     const res = await shouldBlockText(titleText, channelText);
     if (res.block) {
       hideTileWithPlaceholder(tile, res.matched.id, res.matched.title, res.matched.channel, res.sim);
@@ -459,9 +455,50 @@ chrome.storage.onChanged.addListener((changes, area) => {
       for (const k of Object.keys(cache)) runtimeCache.set(k, Float32Array.from(cache[k]));
     }
     if (changes[NEGATIVE_KEY]) negativeItems = changes[NEGATIVE_KEY].newValue || [];
-    if (changes[THRESHOLD_KEY]) threshold = changes[THRESHOLD_KEY].newValue || DEFAULT_THRESHOLD;
+    if (changes[THRESHOLD_KEY]) {
+      const oldThreshold = threshold;
+      threshold = changes[THRESHOLD_KEY].newValue || DEFAULT_THRESHOLD;
+      console.log("[Content Script] Threshold changed via storage:", oldThreshold, "→", threshold);
+      // Re-scan tiles with new threshold
+      const tiles = findVideoTiles();
+      tiles.forEach(tile => {
+        if (tile.offsetParent !== null && !tile.querySelector(".ytd-ai-blocker-placeholder")) {
+          scanAndMaybeHideTile(tile).catch(err => console.error("Rescan error:", err));
+        }
+      });
+    }
     if (changes[MODE_KEY]) mode = changes[MODE_KEY].newValue || "local";
     if (changes[BACKEND_KEY]) backendUrl = changes[BACKEND_KEY].newValue || "";
+  }
+});
+
+/* ---------------- Message listener for popup changes ---------------- */
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request.action === "thresholdChanged") {
+    const newThreshold = request.threshold;
+    threshold = newThreshold;
+    console.log("[Content Script] Threshold updated via message to:", threshold);
+    sendResponse({ success: true, threshold: threshold });
+    
+    // Re-scan all visible tiles with new threshold
+    const tiles = findVideoTiles();
+    console.log("[Content Script] Re-scanning", tiles.length, "tiles with new threshold", threshold);
+    
+    tiles.forEach(tile => {
+      // Only re-scan tiles that are visible
+      if (tile.offsetParent !== null) {
+        // Clear placeholder to reset state
+        const placeholder = tile.querySelector(".ytd-ai-blocker-placeholder");
+        if (placeholder) {
+          // Reset the tile data to allow re-scanning
+          tile.removeAttribute("data-ytd-ai-processed");
+          // Will be re-scanned on next viewport intersection
+        }
+        // Scan immediately with new threshold
+        scanAndMaybeHideTile(tile).catch(err => console.error("Rescan error:", err));
+      }
+    });
+    return true; // Keep channel open for async operations
   }
 });
 
@@ -469,10 +506,10 @@ chrome.storage.onChanged.addListener((changes, area) => {
 (async function bootstrap() {
   try {
     await loadState();
-    if (mode === "local") await ensureModel();
+    // Model loading now happens in background worker - no need to wait here
     // initial attach + observe
     startObserving();
-    console.log("YouTube AI Blocker upgraded content script started. Mode:", mode, "threshold:", threshold);
+    console.log("YouTube AI Blocker content script started. Mode:", mode, "threshold:", threshold);
   } catch (err) {
     console.error("Bootstrap error:", err);
   }
