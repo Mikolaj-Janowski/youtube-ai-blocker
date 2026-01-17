@@ -1,23 +1,38 @@
 // download-model.js
 // Pre-download MiniLM model files to bundle with extension
+import dns from "dns";
+
+dns.setDefaultResultOrder("ipv4first");
+
+const agent = new https.Agent({
+  lookup: (hostname, options, cb) => {
+    if (hostname === "cdn-lfs.huggingface.co") {
+      // CloudFront edge IP (stable)
+      cb(null, "108.138.51.21", 4);
+    } else {
+      dns.lookup(hostname, options, cb);
+    }
+  }
+});
+
 import fs from "fs";
 import path from "path";
 import https from "https";
 import http from "http";
 
-const MODEL_DIR = "./src/models/minilm-l6-v2";
+const MODEL_DIR = "./src/models/all-minilm-l6-v2";
 const FILES_TO_DOWNLOAD = [
   { 
-    url: "https://cdn-lfs.huggingface.co/repos/Xenova/MiniLM-L6-v2/97e96a4325d5ebf8c9d9a10d7abb1b39c2e0df3f/tokenizer.json",
+    url: "https://huggingface.co/Xenova/all-MiniLM-L6-v2/resolve/main/tokenizer.json",
     name: "tokenizer.json"
   },
   {
-    url: "https://cdn-lfs.huggingface.co/repos/Xenova/MiniLM-L6-v2/bf588fb64d1c2f6f6a4f1d8b8a8c9e7f6a5b4c3d/config.json",
+    url: "https://huggingface.co/Xenova/all-MiniLM-L6-v2/resolve/main/config.json",
     name: "config.json"
   },
   {
-    url: "https://cdn-lfs.huggingface.co/repos/Xenova/MiniLM-L6-v2/5ff9d9abf2bb0f4eb4dbaf5cf6d3e5f0c2b0f8e6/model.onnx",
-    name: "model.onnx"
+    url: "https://huggingface.co/Xenova/all-MiniLM-L6-v2/resolve/main/ort-quant.onnx",
+    name: "ort-quant.onnx"
   },
 ];
 

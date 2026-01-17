@@ -2,9 +2,10 @@
   "name": "youtube-ai-blocker",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "scripts": {
     "download-model": "node download-model.js",
-    "build": "esbuild src/content_script.js --bundle --outfile=dist/content_script.js --platform=browser --minify --format=esm && esbuild src/background.js --bundle --outfile=dist/background.js --platform=browser --minify --format=esm && esbuild src/popup.js --bundle --outfile=dist/popup.js --platform=browser --minify && node -e \"require('fs').copyFileSync('src/popup.html', 'dist/popup.html')\" && node -e \"require('fs').copyFileSync('src/styles.css', 'dist/styles.css')\"",
+    "build": "esbuild src/content_script.js --bundle --outfile=dist/content_script.js --platform=browser --minify --format=esm && esbuild src/background.js --bundle --outfile=dist/background.js --platform=browser --minify --format=esm && esbuild src/offscreen.js --bundle --outfile=dist/offscreen.js --platform=browser --minify --format=esm && esbuild src/popup.js --bundle --outfile=dist/popup.js --platform=browser --minify && node -e \"require('fs').copyFileSync('src/popup.html', 'dist/popup.html')\" && node -e \"require('fs').copyFileSync('src/styles.css', 'dist/styles.css')\" && node -e \"require('fs').copyFileSync('src/offscreen.html', 'dist/offscreen.html')\"",
     "watch": "esbuild src/content_script.js --bundle --outfile=dist/content_script.js --platform=browser --sourcemap --format=esm --watch & esbuild src/background.js --bundle --outfile=dist/background.js --platform=browser --sourcemap --format=esm --watch & esbuild src/popup.js --bundle --outfile=dist/popup.js --platform=browser --sourcemap --watch"
   },
   "dependencies": {

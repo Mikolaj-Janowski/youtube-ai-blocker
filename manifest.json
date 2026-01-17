@@ -20,6 +20,7 @@
     "service_worker": "dist/background.js",
     "type": "module"
   },
+  "permissions": ["storage", "scripting", "activeTab", "offscreen"],
   "content_scripts": [
     {
       "matches": ["https://www.youtube.com/*"],
@@ -30,8 +31,12 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["dist/*"],
+      "resources": ["dist/*", "src/models/all-minilm-l6-v2/*"],
       "matches": ["https://www.youtube.com/*"]
     }
-  ]
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'",
+    "sandbox": "sandbox allow-scripts allow-forms allow-popups allow-modals; script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  }
 }
