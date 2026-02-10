@@ -5,7 +5,7 @@ const CACHE_KEY = "ytd_ai_cache_v2";
 const NEGATIVE_KEY = "ytd_ai_negative_v2";
 const MODE_KEY = "ytd_ai_mode_v2";
 const BACKEND_KEY = "ytd_ai_backend_v2";
-const DEFAULT_THRESHOLD = 0.82;
+const DEFAULT_THRESHOLD = 0.7;
 const DEFAULT_MODE = "local";
 
 document.addEventListener("DOMContentLoaded", async () => {
@@ -21,8 +21,10 @@ document.addEventListener("DOMContentLoaded", async () => {
   // load settings
   chrome.storage.local.get([THRESHOLD_KEY, STORAGE_KEY, MODE_KEY, BACKEND_KEY], (data) => {
     const th = data[THRESHOLD_KEY] || DEFAULT_THRESHOLD;
+    console.log("Loading threshold from storage:", th);
     thresholdInput.value = th;
-    thVal.innerText = th;
+    thVal.innerText = th.toFixed(2);
+    console.log("Set thVal.innerText to:", th.toFixed(2));
     modeSelect.value = data[MODE_KEY] || DEFAULT_MODE;
     backendUrlInput.value = data[BACKEND_KEY] || "";
     renderBlocked(data[STORAGE_KEY] || []);
@@ -30,11 +32,31 @@ document.addEventListener("DOMContentLoaded", async () => {
   });
 
   thresholdInput.addEventListener("input", (e) => {
-    thVal.innerText = e.target.value;
+    const val = parseFloat(e.target.value);
+    const roundedVal = Math.round(val * 100) / 100;
+    console.log("Slider moved. Value:", val, "Rounded:", roundedVal);
+    thVal.innerText = roundedVal.toFixed(2);
+    console.log("Updated thVal display to:", roundedVal.toFixed(2));
+    // Save and broadcast immediately on input
+    chrome.storage.local.set({ [THRESHOLD_KEY]: roundedVal }, () => {
+      console.log("Threshold saved to storage:", roundedVal);
+      // Notify all tabs that threshold changed
+      chrome.tabs.query({}, (tabs) => {
+        console.log("Queried", tabs.length, "tabs");
+        tabs.forEach(tab => {
+          chrome.tabs.sendMessage(tab.id, { action: "thresholdChanged", threshold: roundedVal }).then(() => {
+            console.log("Threshold message sent to tab:", tab.id, roundedVal);
+          }).catch((err) => {
+            console.log("Could not send to tab", tab.id, "(may not have content script)");
+          });
+        });
+      });
+    });
   });
 
   thresholdInput.addEventListener("change", (e) => {
     const v = parseFloat(e.target.value);
+    // Ensure it's saved (already saved on input, but do it again for safety)
     chrome.storage.local.set({ [THRESHOLD_KEY]: v });
   });
 
