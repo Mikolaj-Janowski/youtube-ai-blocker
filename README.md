@@ -8,24 +8,24 @@ An AI-powered browser extension for intelligent, adaptive content filtering on Y
 
 ---
 
-## 🎯 Overview
+## Overview
 
 YouTube AI Blocker is an academic research project that demonstrates how AI can enhance user autonomy and control over digital content. Unlike traditional keyword-based filters, this extension uses **semantic understanding** to learn what types of content you want to avoid.
 
 ### Key Features
 
-- 🧠 **AI-Powered Filtering**: Uses MiniLM-L6-v2 transformer model for semantic similarity
-- 🔒 **Privacy-First**: All processing happens locally in your browser
-- 📚 **Learns from You**: Adapts based on your blocking decisions
-- ⚡ **Real-Time**: Automatically filters content as you browse
-- 🎚️ **Adjustable**: Fine-tune sensitivity with threshold slider
-- ↩️ **Reversible**: Undo mistakes with "Show this" button
-- 👎 **Negative Feedback**: Mark false positives as "Not similar"
-- 🔄 **Dual Mode**: Local ONNX inference or optional remote backend
+- **AI-Powered Filtering**: Uses MiniLM-L6-v2 transformer model for semantic similarity
+- **Privacy-First**: All processing happens locally in your browser
+- **Learns from You**: Adapts based on your blocking decisions
+- **Real-Time**: Automatically filters content as you browse
+- **Adjustable**: Fine-tune sensitivity with threshold slider
+- **Reversible**: Undo mistakes with "Show this" button
+- **Negative Feedback**: Mark false positives as "Not similar"
+- **Dual Mode**: Local ONNX inference or optional remote backend
 
 ---
 
-## 📋 Table of Contents
+## Table of Contents
 
 - [How It Works](#how-it-works)
 - [Installation](#installation)
@@ -41,7 +41,7 @@ YouTube AI Blocker is an academic research project that demonstrates how AI can 
 
 ---
 
-## 🔬 How It Works
+## How It Works
 
 ### 1. **You Block Content**
 Click the "Block" button on any YouTube video. The extension captures the video's title and channel name.
@@ -70,7 +70,7 @@ Traditional filters use simple keyword matching (e.g., block "politics"). This e
 
 ---
 
-## 💻 Installation
+## Installation
 
 ### Prerequisites
 - Google Chrome or Chromium-based browser (Edge, Brave, etc.)
@@ -111,7 +111,7 @@ npm run build
 
 ---
 
-## 🚀 Usage
+## Usage
 
 ### Basic Workflow
 
@@ -163,7 +163,7 @@ npm run build
 
 ---
 
-## 🏗️ Architecture
+## Architecture
 
 ### System Components
 
@@ -224,7 +224,7 @@ npm run build
 
 ---
 
-## 🔧 Technical Details
+## Technical Details
 
 ### AI Model
 
@@ -286,7 +286,7 @@ function shouldBlock(video) {
 
 ---
 
-## ⚙️ Configuration
+## Configuration
 
 ### Storage Keys
 
@@ -331,7 +331,7 @@ If using remote mode, your backend must implement:
 
 ---
 
-## 🛠️ Development
+## Development
 
 ### Project Structure
 
@@ -404,7 +404,7 @@ npm run lint
 
 ---
 
-## 📚 Academic Context
+## Academic Context
 
 ### Research Background
 
@@ -458,7 +458,7 @@ This project is part of academic research into **user-in-the-loop machine learni
 
 ---
 
-## ❓ FAQ
+## FAQ
 
 ### General Questions
 
@@ -512,7 +512,7 @@ A: Embeddings are more data-efficient. You can filter content after blocking jus
 
 ---
 
-## 🤝 Contributing
+## Contributing
 
 This is an academic research project. Contributions are welcome after the initial evaluation phase.
 
@@ -548,7 +548,7 @@ This is an academic research project. Contributions are welcome after the initia
 
 ---
 
-## 📄 License
+## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
 
@@ -565,7 +565,7 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ---
 
-## 🙏 Acknowledgments
+## Acknowledgments
 
 - **Xenova/transformers**: Outstanding browser-based ML inference library
 - **Sentence-Transformers**: High-quality embedding models
@@ -575,7 +575,7 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ---
 
-## 📞 Contact
+## Contact
 
 For questions, feedback, or collaboration inquiries:
 
@@ -585,7 +585,7 @@ For questions, feedback, or collaboration inquiries:
 
 ---
 
-## 🔗 Links
+## Links
 
 - [Project Repository](https://github.com/yourusername/youtube-ai-blocker)
 - [Detailed Checklist](PROJECT_CHECKLIST.md)
@@ -595,6 +595,6 @@ For questions, feedback, or collaboration inquiries:
 
 ---
 
-**Built with ❤️ for better digital experiences and user autonomy**
+**Built for better digital experiences and user autonomy**
 
 *Last Updated: February 10, 2026*

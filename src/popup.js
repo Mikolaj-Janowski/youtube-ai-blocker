@@ -5,8 +5,12 @@ const CACHE_KEY = "ytd_ai_cache_v2";
 const NEGATIVE_KEY = "ytd_ai_negative_v2";
 const MODE_KEY = "ytd_ai_mode_v2";
 const BACKEND_KEY = "ytd_ai_backend_v2";
+const CLASSIFIER_KEY = "ytd_ai_classifier_v2";
+const CLASSIFIER_ENABLED_KEY = "ytd_ai_classifier_enabled_v2";
 const DEFAULT_THRESHOLD = 0.7;
 const DEFAULT_MODE = "local";
+const MIN_POSITIVES = 10;
+const MIN_NEGATIVES = 5;
 
 document.addEventListener("DOMContentLoaded", async () => {
   const blockedList = document.getElementById("blockedList");
@@ -17,9 +21,15 @@ document.addEventListener("DOMContentLoaded", async () => {
   const modeSelect = document.getElementById("mode");
   const backendUrlInput = document.getElementById("backendUrl");
   const backendRow = document.getElementById("backendRow");
+  const classifierEnabledCheckbox = document.getElementById("classifierEnabled");
+  const classifierStatusDiv = document.getElementById("classifierStatus");
+  const retrainClassifierBtn = document.getElementById("retrainClassifier");
 
   // load settings
-  chrome.storage.local.get([THRESHOLD_KEY, STORAGE_KEY, MODE_KEY, BACKEND_KEY], (data) => {
+  chrome.storage.local.get([
+    THRESHOLD_KEY, STORAGE_KEY, MODE_KEY, BACKEND_KEY, 
+    CLASSIFIER_ENABLED_KEY, CLASSIFIER_KEY, NEGATIVE_KEY
+  ], (data) => {
     const th = data[THRESHOLD_KEY] || DEFAULT_THRESHOLD;
     console.log("Loading threshold from storage:", th);
     thresholdInput.value = th;
@@ -27,7 +37,9 @@ document.addEventListener("DOMContentLoaded", async () => {
     console.log("Set thVal.innerText to:", th.toFixed(2));
     modeSelect.value = data[MODE_KEY] || DEFAULT_MODE;
     backendUrlInput.value = data[BACKEND_KEY] || "";
+    classifierEnabledCheckbox.checked = data[CLASSIFIER_ENABLED_KEY] || false;
     renderBlocked(data[STORAGE_KEY] || []);
+    updateClassifierStatus(data[STORAGE_KEY] || [], data[NEGATIVE_KEY] || [], data[CLASSIFIER_KEY]);
     backendRow.style.display = (modeSelect.value === "remote") ? "block" : "none";
   });
 
@@ -84,11 +96,89 @@ document.addEventListener("DOMContentLoaded", async () => {
     });
   });
 
+  classifierEnabledCheckbox.addEventListener("change", () => {
+    const enabled = classifierEnabledCheckbox.checked;
+    chrome.storage.local.set({ [CLASSIFIER_ENABLED_KEY]: enabled }, () => {
+      console.log("Classifier enabled:", enabled);
+      // Reload status
+      chrome.storage.local.get([STORAGE_KEY, NEGATIVE_KEY, CLASSIFIER_KEY], (data) => {
+        updateClassifierStatus(data[STORAGE_KEY] || [], data[NEGATIVE_KEY] || [], data[CLASSIFIER_KEY]);
+      });
+    });
+  });
+
+  retrainClassifierBtn.addEventListener("click", () => {
+    retrainClassifierBtn.disabled = true;
+    retrainClassifierBtn.innerText = "Training...";
+    
+    // Send message to content script to retrain
+    chrome.tabs.query({active: true, currentWindow: true}, (tabs) => {
+      if (tabs[0]) {
+        chrome.tabs.sendMessage(tabs[0].id, { action: "retrainClassifier" }, (response) => {
+          retrainClassifierBtn.disabled = false;
+          retrainClassifierBtn.innerText = "Retrain Classifier Now";
+          
+          if (chrome.runtime.lastError) {
+            alert("Could not retrain: Make sure you're on a YouTube page.");
+            return;
+          }
+          
+          if (response && response.success) {
+            alert(response.message || `Trained on ${response.numExamples} examples`);
+            // Reload classifier status
+            chrome.storage.local.get([STORAGE_KEY, NEGATIVE_KEY, CLASSIFIER_KEY], (data) => {
+              updateClassifierStatus(data[STORAGE_KEY] || [], data[NEGATIVE_KEY] || [], data[CLASSIFIER_KEY]);
+            });
+          } else {
+            alert("Training failed: " + (response ? response.error : "Unknown error"));
+          }
+        });
+      }
+    });
+  });
+
   chrome.storage.onChanged.addListener((changes) => {
     if (changes[STORAGE_KEY]) {
       renderBlocked(changes[STORAGE_KEY].newValue || []);
     }
+    // Update classifier status if relevant data changed
+    if (changes[STORAGE_KEY] || changes[NEGATIVE_KEY] || changes[CLASSIFIER_KEY]) {
+      chrome.storage.local.get([STORAGE_KEY, NEGATIVE_KEY, CLASSIFIER_KEY], (data) => {
+        updateClassifierStatus(data[STORAGE_KEY] || [], data[NEGATIVE_KEY] || [], data[CLASSIFIER_KEY]);
+      });
+    }
   });
+
+  function updateClassifierStatus(blockedItems, negativeItems, classifierData) {
+    const numPos = blockedItems.length;
+    const numNeg = negativeItems.length;
+    
+    if (classifierData && classifierData.trainedOn > 0) {
+      const lastTrained = classifierData.lastTrained 
+        ? new Date(classifierData.lastTrained).toLocaleString()
+        : "Unknown";
+      classifierStatusDiv.innerHTML = `
+        <div style="color: green; font-weight: 600;">✓ Trained on ${classifierData.trainedOn} examples</div>
+        <div style="font-size: 11px; color: #666; margin-top: 2px;">Last trained: ${lastTrained}</div>
+      `;
+    } else if (numPos >= MIN_POSITIVES && numNeg >= MIN_NEGATIVES) {
+      classifierStatusDiv.innerHTML = `
+        <div style="color: orange; font-weight: 600;">⚠ Ready to train</div>
+        <div style="font-size: 11px; color: #666; margin-top: 2px;">
+          ${numPos} blocked items, ${numNeg} negative examples
+        </div>
+      `;
+    } else {
+      const needPos = Math.max(0, MIN_POSITIVES - numPos);
+      const needNeg = Math.max(0, MIN_NEGATIVES - numNeg);
+      classifierStatusDiv.innerHTML = `
+        <div style="color: #999;">Not enough data</div>
+        <div style="font-size: 11px; color: #666; margin-top: 2px;">
+          Need ${needPos} more blocked, ${needNeg} more "not similar"
+        </div>
+      `;
+    }
+  }
 
   function renderBlocked(items) {
     blockedList.innerHTML = "";

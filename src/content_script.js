@@ -3,9 +3,12 @@
 // Supports: ONNX (local) OR remote backend embeddings.
 // Features: embedding cache, intersection-only embedding, batching, debounce,
 // placeholder UI with Undo / "Not similar" feedback (negative examples).
+// Hybrid Mode: Uses both similarity matching AND logistic regression classifier
 
 // Content script delegates embedding to background worker
 // This avoids CORS/network restrictions in content scripts
+
+import { LogisticRegressionClassifier } from './classifier.js';
 
 /* ---------------- Configuration keys ---------------- */
 const STORAGE_KEY = "ytd_ai_blocked_items_v2"; // blocked positives
@@ -14,9 +17,14 @@ const NEGATIVE_KEY = "ytd_ai_negative_v2";     // negative examples
 const THRESHOLD_KEY = "ytd_ai_threshold_v2";
 const MODE_KEY = "ytd_ai_mode_v2";             // 'local' or 'remote'
 const BACKEND_KEY = "ytd_ai_backend_v2";
+const CLASSIFIER_KEY = "ytd_ai_classifier_v2"; // trained classifier model
+const CLASSIFIER_ENABLED_KEY = "ytd_ai_classifier_enabled_v2"; // on/off toggle
 
 const DEFAULT_THRESHOLD = 0.7;
 const EMBED_BATCH_SIZE = 8;  // batch size for embedding in local mode
+const CLASSIFIER_THRESHOLD = 0.5; // probability threshold for classifier predictions
+const MIN_POSITIVES_FOR_TRAINING = 10; // minimum blocked items to train classifier
+const MIN_NEGATIVES_FOR_TRAINING = 5;  // minimum negative examples to train classifier
 
 /* ---------------- Globals ---------------- */
 let extractor = null; // Not used - delegated to background worker
@@ -27,6 +35,8 @@ let runtimeCache = new Map(); // in-memory cache title->Float32Array
 let threshold = DEFAULT_THRESHOLD;
 let mode = "local";
 let backendUrl = "";
+let classifier = new LogisticRegressionClassifier(); // logistic regression classifier
+let classifierEnabled = false; // whether to use classifier in predictions
 
 let embedQueue = []; // queue of {text, resolve}
 
@@ -55,13 +65,25 @@ function saveToStorage(keys) {
 
 /* ---------------- Storage load ---------------- */
 async function loadState() {
-  const data = await new Promise(res => chrome.storage.local.get([STORAGE_KEY, CACHE_KEY, NEGATIVE_KEY, THRESHOLD_KEY, MODE_KEY, BACKEND_KEY], res));
+  const data = await new Promise(res => chrome.storage.local.get([
+    STORAGE_KEY, CACHE_KEY, NEGATIVE_KEY, THRESHOLD_KEY, MODE_KEY, BACKEND_KEY,
+    CLASSIFIER_KEY, CLASSIFIER_ENABLED_KEY
+  ], res));
+  
   blockedItems = data[STORAGE_KEY] || [];
   cache = data[CACHE_KEY] || {};
   negativeItems = data[NEGATIVE_KEY] || [];
   threshold = data[THRESHOLD_KEY] || DEFAULT_THRESHOLD;
   mode = data[MODE_KEY] || "local";
   backendUrl = data[BACKEND_KEY] || "";
+  classifierEnabled = data[CLASSIFIER_ENABLED_KEY] || false;
+  
+  // Load classifier if it exists
+  if (data[CLASSIFIER_KEY]) {
+    classifier.fromJSON(data[CLASSIFIER_KEY]);
+    console.log("Classifier loaded:", classifier.getStats());
+  }
+  
   // populate runtimeCache
   for (const k of Object.keys(cache)) {
     runtimeCache.set(k, Float32Array.from(cache[k]));
@@ -160,6 +182,12 @@ function addBlockedItem(title, channel, embedding) {
   const id = `blocked_${Date.now()}_${Math.floor(Math.random()*10000)}`;
   blockedItems.push({ id, title, channel, embedding: Array.from(embedding) });
   saveToStorage({ [STORAGE_KEY]: blockedItems });
+  
+  // Trigger classifier retraining if enabled and enough data
+  if (classifierEnabled) {
+    setTimeout(() => maybeTrainClassifier(), 100);
+  }
+  
   return id;
 }
 
@@ -167,6 +195,12 @@ function addNegativeItem(title, channel, embedding) {
   const id = `neg_${Date.now()}_${Math.floor(Math.random()*10000)}`;
   negativeItems.push({ id, title, channel, embedding: Array.from(embedding) });
   saveToStorage({ [NEGATIVE_KEY]: negativeItems });
+  
+  // Trigger classifier retraining if enabled and enough data
+  if (classifierEnabled) {
+    setTimeout(() => maybeTrainClassifier(), 100);
+  }
+  
   return id;
 }
 
@@ -175,25 +209,116 @@ function removeBlockedById(id) {
   saveToStorage({ [STORAGE_KEY]: blockedItems });
 }
 
-/* ---------------- Determine blocking ---------------- */
+/* ---------------- Classifier Training ---------------- */
+async function maybeTrainClassifier() {
+  if (!classifierEnabled) {
+    console.log("Classifier disabled, skipping training");
+    return;
+  }
+  
+  // Check if we have enough data
+  if (blockedItems.length < MIN_POSITIVES_FOR_TRAINING || 
+      negativeItems.length < MIN_NEGATIVES_FOR_TRAINING) {
+    console.log(`Not enough data to train classifier. Need ${MIN_POSITIVES_FOR_TRAINING} blocked (have ${blockedItems.length}), ${MIN_NEGATIVES_FOR_TRAINING} negatives (have ${negativeItems.length})`);
+    return;
+  }
+  
+  console.log(`Training classifier on ${blockedItems.length} positives and ${negativeItems.length} negatives...`);
+  
+  // Prepare training data
+  const X = [];
+  const y = [];
+  
+  // Add positive examples (blocked items)
+  for (const item of blockedItems) {
+    X.push(Float32Array.from(item.embedding));
+    y.push(1);
+  }
+  
+  // Add negative examples
+  for (const item of negativeItems) {
+    X.push(Float32Array.from(item.embedding));
+    y.push(0);
+  }
+  
+  // Train classifier
+  try {
+    const stats = classifier.train(X, y, 100, true);
+    console.log("Classifier training complete:", stats);
+    
+    // Save classifier to storage
+    saveToStorage({ [CLASSIFIER_KEY]: classifier.toJSON() });
+    
+    return stats;
+  } catch (err) {
+    console.error("Classifier training failed:", err);
+    return null;
+  }
+}
+
+/* ---------------- Determine blocking (Hybrid Mode) ---------------- */
 async function shouldBlockText(title, channel) {
   if (!blockedItems || blockedItems.length === 0) return { block: false };
   const text = `${title} — ${channel}`;
   const emb = await embed(text);
-  // check negative items first: if candidate similar to negative > thresholdNeg => never block
+  
+  let blockReasons = [];
+  let maxSim = 0;
+  let matchedItem = null;
+  
+  // STEP 1: Check negative items (veto power - if similar to negative, never block)
   for (const neg of negativeItems) {
     const simNeg = cosineSimilarity(emb, Float32Array.from(neg.embedding));
     if (simNeg >= threshold) {
       return { block: false, reason: "matched_negative", simNeg };
     }
   }
-  // check positives
+  
+  // STEP 2: Check similarity to blocked items
   for (const b of blockedItems) {
     const sim = cosineSimilarity(emb, Float32Array.from(b.embedding));
+    if (sim > maxSim) {
+      maxSim = sim;
+      matchedItem = b;
+    }
     if (sim >= threshold) {
-      return { block: true, matched: b, sim };
+      blockReasons.push({
+        method: "similarity",
+        confidence: sim,
+        matched: b
+      });
     }
   }
+  
+  // STEP 3: Check classifier prediction (if enabled and trained)
+  if (classifierEnabled && classifier && classifier.isReady()) {
+    try {
+      const prob = classifier.predict(emb);
+      if (prob >= CLASSIFIER_THRESHOLD) {
+        blockReasons.push({
+          method: "classifier",
+          confidence: prob
+        });
+      }
+      
+      // Log classifier prediction for debugging
+      console.log(`Classifier prediction for "${title}": ${(prob * 100).toFixed(1)}%`);
+    } catch (err) {
+      console.error("Classifier prediction error:", err);
+    }
+  }
+  
+  // DECISION: Block if ANY method says to block (hybrid OR logic)
+  if (blockReasons.length > 0) {
+    return {
+      block: true,
+      reasons: blockReasons,
+      matched: matchedItem,
+      sim: maxSim,
+      numMethods: blockReasons.length
+    };
+  }
+  
   return { block: false };
 }
 
@@ -207,12 +332,21 @@ function createBlockButton() {
   return btn;
 }
 
-function createPlaceholder(matchedTitle, matchedChannel, matchedId, matchedSim) {
+function createPlaceholder(matchedTitle, matchedChannel, matchedId, matchedSim, blockReasons = []) {
   const wrapper = document.createElement("div");
   wrapper.className = "ytd-ai-blocker-placeholder";
   wrapper.style.cssText = "padding:8px;border:1px dashed #ccc;background:#fff;margin:6px 0;font-size:13px;";
+  
+  // Build reason text
+  let reasonText = "";
+  if (blockReasons && blockReasons.length > 0) {
+    const methods = blockReasons.map(r => `${r.method} (${(r.confidence * 100).toFixed(0)}%)`).join(" + ");
+    reasonText = `<div style="font-size:11px;color:#666;margin-top:2px;">Methods: ${methods}</div>`;
+  }
+  
   wrapper.innerHTML = `<div style="font-weight:600">Blocked by AI</div>
     <div style="font-size:12px;color:#444;margin-top:4px;">Matched: ${escapeHtml(matchedTitle)} — ${escapeHtml(matchedChannel)} (sim ${matchedSim.toFixed(2)})</div>
+    ${reasonText}
     <div style="margin-top:8px;">
       <button class="ai-unblock-btn" style="margin-right:8px">Show this</button>
       <button class="ai-negative-btn">Not similar</button>
@@ -324,9 +458,9 @@ function attachButtonsToTile(tile) {
   tile.setAttribute("data-ytd-ai-processed", "true");
 }
 
-function hideTileWithPlaceholder(tile, matchedId, matchedTitle, matchedChannel, matchedSim) {
+function hideTileWithPlaceholder(tile, matchedId, matchedTitle, matchedChannel, matchedSim, blockReasons = []) {
   // replace tile's content with placeholder but keep a reference to restore
-  const placeholder = createPlaceholder(matchedTitle, matchedChannel, matchedId, matchedSim);
+  const placeholder = createPlaceholder(matchedTitle, matchedChannel, matchedId, matchedSim, blockReasons);
   const originalDisplay = tile.style.display;
   const originalChildren = Array.from(tile.childNodes).map(n => n.cloneNode(true));
   tile.innerHTML = "";
@@ -419,7 +553,7 @@ async function scanAndMaybeHideTile(tile) {
     // Check similarity-based blocking
     const res = await shouldBlockText(titleText, channelText);
     if (res.block) {
-      hideTileWithPlaceholder(tile, res.matched.id, res.matched.title, res.matched.channel, res.sim);
+      hideTileWithPlaceholder(tile, res.matched.id, res.matched.title, res.matched.channel, res.sim, res.reasons);
     }
   } catch (err) {
     console.error("scanAndMaybeHideTile error:", err);
@@ -469,6 +603,14 @@ chrome.storage.onChanged.addListener((changes, area) => {
     }
     if (changes[MODE_KEY]) mode = changes[MODE_KEY].newValue || "local";
     if (changes[BACKEND_KEY]) backendUrl = changes[BACKEND_KEY].newValue || "";
+    if (changes[CLASSIFIER_ENABLED_KEY]) {
+      classifierEnabled = changes[CLASSIFIER_ENABLED_KEY].newValue || false;
+      console.log("[Content Script] Classifier enabled:", classifierEnabled);
+    }
+    if (changes[CLASSIFIER_KEY]) {
+      classifier.fromJSON(changes[CLASSIFIER_KEY].newValue);
+      console.log("[Content Script] Classifier updated:", classifier.getStats());
+    }
   }
 });
 
@@ -498,6 +640,30 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         scanAndMaybeHideTile(tile).catch(err => console.error("Rescan error:", err));
       }
     });
+    return true; // Keep channel open for async operations
+  }
+  
+  if (request.action === "retrainClassifier") {
+    console.log("[Content Script] Manual classifier retraining requested");
+    maybeTrainClassifier()
+      .then(stats => {
+        if (stats) {
+          sendResponse({ 
+            success: true, 
+            numExamples: stats.numExamples,
+            accuracy: stats.accuracy,
+            message: `Trained on ${stats.numExamples} examples with ${(stats.accuracy * 100).toFixed(1)}% accuracy`
+          });
+        } else {
+          sendResponse({ 
+            success: false, 
+            error: "Not enough training data or classifier disabled"
+          });
+        }
+      })
+      .catch(err => {
+        sendResponse({ success: false, error: err.message });
+      });
     return true; // Keep channel open for async operations
   }
 });
