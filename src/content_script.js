@@ -3,30 +3,41 @@
 // Supports: ONNX (local) OR remote backend embeddings.
 // Features: embedding cache, intersection-only embedding, batching, debounce,
 // placeholder UI with Undo / "Not similar" feedback (negative examples).
+// Hybrid Mode: Uses both similarity matching AND logistic regression classifier
 
 // Content script delegates embedding to background worker
 // This avoids CORS/network restrictions in content scripts
 
+import { LogisticRegressionClassifier } from './classifier.js';
+
 /* ---------------- Configuration keys ---------------- */
 const STORAGE_KEY = "ytd_ai_blocked_items_v2"; // blocked positives
 const CACHE_KEY = "ytd_ai_cache_v2";           // map text -> embedding array
-const NEGATIVE_KEY = "ytd_ai_negative_v2";     // negative examples
+const NEGATIVE_KEY = "ytd_ai_negative_v2";     // negative examples ("don't block")
+const ALLOWED_KEY = "ytd_ai_allowed_v2";       // explicitly allowed items (user clicked "show this")
 const THRESHOLD_KEY = "ytd_ai_threshold_v2";
 const MODE_KEY = "ytd_ai_mode_v2";             // 'local' or 'remote'
 const BACKEND_KEY = "ytd_ai_backend_v2";
+const CLASSIFIER_KEY = "ytd_ai_classifier_v2"; // trained classifier model
+const CLASSIFIER_ENABLED_KEY = "ytd_ai_classifier_enabled_v2"; // on/off toggle
 
 const DEFAULT_THRESHOLD = 0.7;
 const EMBED_BATCH_SIZE = 8;  // batch size for embedding in local mode
+const MIN_POSITIVES_FOR_TRAINING = 10; // minimum blocked items to train classifier
+const MIN_NEGATIVES_FOR_TRAINING = 20;  // minimum negative examples to train classifier
 
 /* ---------------- Globals ---------------- */
 let extractor = null; // Not used - delegated to background worker
 let blockedItems = []; // {id, title, channel, embedding}
-let negativeItems = []; // {id, title, channel, embedding}
+let negativeItems = []; // {id, title, channel, embedding} - "don't block" examples
+let allowedItems = []; // {id, title, channel, timestamp} - explicitly allowed by user
 let cache = {}; // persistent cache loaded from storage (title->embedding array)
 let runtimeCache = new Map(); // in-memory cache title->Float32Array
 let threshold = DEFAULT_THRESHOLD;
 let mode = "local";
 let backendUrl = "";
+let classifier = new LogisticRegressionClassifier(); // logistic regression classifier
+let classifierEnabled = false; // whether to use classifier in predictions
 
 let embedQueue = []; // queue of {text, resolve}
 
@@ -55,13 +66,26 @@ function saveToStorage(keys) {
 
 /* ---------------- Storage load ---------------- */
 async function loadState() {
-  const data = await new Promise(res => chrome.storage.local.get([STORAGE_KEY, CACHE_KEY, NEGATIVE_KEY, THRESHOLD_KEY, MODE_KEY, BACKEND_KEY], res));
+  const data = await new Promise(res => chrome.storage.local.get([
+    STORAGE_KEY, CACHE_KEY, NEGATIVE_KEY, ALLOWED_KEY, THRESHOLD_KEY, MODE_KEY, BACKEND_KEY,
+    CLASSIFIER_KEY, CLASSIFIER_ENABLED_KEY
+  ], res));
+  
   blockedItems = data[STORAGE_KEY] || [];
   cache = data[CACHE_KEY] || {};
   negativeItems = data[NEGATIVE_KEY] || [];
+  allowedItems = data[ALLOWED_KEY] || [];
   threshold = data[THRESHOLD_KEY] || DEFAULT_THRESHOLD;
   mode = data[MODE_KEY] || "local";
   backendUrl = data[BACKEND_KEY] || "";
+  classifierEnabled = data[CLASSIFIER_ENABLED_KEY] || false;
+  
+  // Load classifier if it exists
+  if (data[CLASSIFIER_KEY]) {
+    classifier.fromJSON(data[CLASSIFIER_KEY]);
+    console.log("Classifier loaded:", classifier.getStats());
+  }
+  
   // populate runtimeCache
   for (const k of Object.keys(cache)) {
     runtimeCache.set(k, Float32Array.from(cache[k]));
@@ -160,6 +184,12 @@ function addBlockedItem(title, channel, embedding) {
   const id = `blocked_${Date.now()}_${Math.floor(Math.random()*10000)}`;
   blockedItems.push({ id, title, channel, embedding: Array.from(embedding) });
   saveToStorage({ [STORAGE_KEY]: blockedItems });
+  
+  // Trigger classifier retraining if enabled and enough data
+  if (classifierEnabled) {
+    setTimeout(() => maybeTrainClassifier(), 100);
+  }
+  
   return id;
 }
 
@@ -167,7 +197,27 @@ function addNegativeItem(title, channel, embedding) {
   const id = `neg_${Date.now()}_${Math.floor(Math.random()*10000)}`;
   negativeItems.push({ id, title, channel, embedding: Array.from(embedding) });
   saveToStorage({ [NEGATIVE_KEY]: negativeItems });
+  
+  // Trigger classifier retraining if enabled and enough data
+  if (classifierEnabled) {
+    setTimeout(() => maybeTrainClassifier(), 100);
+  }
+  
   return id;
+}
+
+function addAllowedItem(title, channel) {
+  const id = `allow_${Date.now()}_${Math.floor(Math.random()*10000)}`;
+  const item = { id, title, channel, timestamp: Date.now() };
+  allowedItems.push(item);
+  saveToStorage({ [ALLOWED_KEY]: allowedItems });
+  console.log(`Added to allowed list: "${title}" by "${channel}". Total allowed: ${allowedItems.length}`);
+  return id;
+}
+
+function removeAllowedItem(title, channel) {
+  allowedItems = allowedItems.filter(a => !(a.title === title && a.channel === channel));
+  saveToStorage({ [ALLOWED_KEY]: allowedItems });
 }
 
 function removeBlockedById(id) {
@@ -175,48 +225,304 @@ function removeBlockedById(id) {
   saveToStorage({ [STORAGE_KEY]: blockedItems });
 }
 
-/* ---------------- Determine blocking ---------------- */
+/* ---------------- Classifier Training ---------------- */
+async function maybeTrainClassifier() {
+  if (!classifierEnabled) {
+    console.log("Classifier disabled, skipping training");
+    return;
+  }
+  
+  // Check if we have enough data
+  if (blockedItems.length < MIN_POSITIVES_FOR_TRAINING || 
+      negativeItems.length < MIN_NEGATIVES_FOR_TRAINING) {
+    console.log(`Not enough data to train classifier. Need ${MIN_POSITIVES_FOR_TRAINING} blocked (have ${blockedItems.length}), ${MIN_NEGATIVES_FOR_TRAINING} negatives (have ${negativeItems.length})`);
+    return;
+  }
+  
+  console.log(`Training classifier on ${blockedItems.length} positives and ${negativeItems.length} negatives...`);
+  
+  // Prepare training data
+  const positives = [];
+  const negatives = [];
+  
+  // Collect positive examples (blocked items)
+  for (const item of blockedItems) {
+    positives.push(Float32Array.from(item.embedding));
+  }
+  
+  // Collect negative examples
+  for (const item of negativeItems) {
+    negatives.push(Float32Array.from(item.embedding));
+  }
+  
+  // Balance dataset to prevent bias toward majority class
+  const minCount = Math.min(positives.length, negatives.length);
+  const maxCount = Math.max(positives.length, negatives.length);
+  const imbalanceRatio = maxCount / minCount;
+  
+  console.log(`Data balance: ${positives.length} positives, ${negatives.length} negatives (ratio: ${imbalanceRatio.toFixed(2)})`);
+  
+  // If severely imbalanced (>2:1), balance the dataset
+  const X = [];
+  const y = [];
+  
+  if (imbalanceRatio > 2.0) {
+    console.log("Balancing dataset due to class imbalance...");
+    // Undersample majority class
+    const balancedCount = minCount;
+    
+    // Shuffle and take equal amounts
+    const shuffledPos = [...positives].sort(() => Math.random() - 0.5);
+    const shuffledNeg = [...negatives].sort(() => Math.random() - 0.5);
+    
+    for (let i = 0; i < balancedCount; i++) {
+      X.push(shuffledPos[i]);
+      y.push(1);
+      X.push(shuffledNeg[i]);
+      y.push(0);
+    }
+    console.log(`Balanced to ${balancedCount} examples per class`);
+  } else {
+    // Use all data if reasonably balanced
+    for (const emb of positives) {
+      X.push(emb);
+      y.push(1);
+    }
+    for (const emb of negatives) {
+      X.push(emb);
+      y.push(0);
+    }
+  }
+  
+  // Train classifier with reduced regularization for better fit
+  try {
+    classifier.regularization = 0.0001; // Lower regularization
+    const stats = classifier.train(X, y, 150, true); // More epochs
+    console.log("Classifier training complete:", stats);
+    
+    // Save classifier to storage
+    saveToStorage({ [CLASSIFIER_KEY]: classifier.toJSON() });
+    
+    return stats;
+  } catch (err) {
+    console.error("Classifier training failed:", err);
+    return null;
+  }
+}
+
+/* ---------------- Determine blocking (Hybrid Mode) ---------------- */
 async function shouldBlockText(title, channel) {
   if (!blockedItems || blockedItems.length === 0) return { block: false };
+  
+  // STEP 0: Check if explicitly allowed by user (clicked "Show this")
+  const isAllowed = allowedItems.find(a => a.title === title && a.channel === channel);
+  if (isAllowed) {
+    console.log(`Video "${title}" is explicitly allowed (Show this was clicked)`);
+    return { block: false, reason: "explicitly_allowed" };
+  }
+  
   const text = `${title} — ${channel}`;
   const emb = await embed(text);
-  // check negative items first: if candidate similar to negative > thresholdNeg => never block
-  for (const neg of negativeItems) {
-    const simNeg = cosineSimilarity(emb, Float32Array.from(neg.embedding));
-    if (simNeg >= threshold) {
-      return { block: false, reason: "matched_negative", simNeg };
-    }
-  }
-  // check positives
+  
+  let blockReasons = [];
+  let maxSim = 0;
+  let matchedItem = null;
+  
+  // STEP 1: Check negative items ("don't block" - these are TRAINING data, not veto)
+  // Negatives are now part of classifier training, not a separate veto check
+  
+  // STEP 2: Check similarity to blocked items
   for (const b of blockedItems) {
     const sim = cosineSimilarity(emb, Float32Array.from(b.embedding));
+    if (sim > maxSim) {
+      maxSim = sim;
+      matchedItem = b;
+    }
     if (sim >= threshold) {
-      return { block: true, matched: b, sim };
+      blockReasons.push({
+        method: "similarity",
+        confidence: sim,
+        matched: b
+      });
     }
   }
+  
+  // STEP 3: Check classifier prediction (if enabled and trained)
+  // Use the same threshold as similarity matching for consistency
+  if (classifierEnabled && classifier && classifier.isReady()) {
+    try {
+      const prob = classifier.predict(emb);
+      
+      // Classifier should respect user's threshold setting
+      // Use threshold as classifier probability cutoff
+      if (prob >= threshold) {
+        blockReasons.push({
+          method: "classifier",
+          confidence: prob
+        });
+      }
+      
+      // Log classifier prediction for debugging (only if above 30% to reduce noise)
+      if (prob >= 0.3) {
+        console.log(`Classifier prediction for "${title}": ${(prob * 100).toFixed(1)}% (threshold: ${(threshold * 100).toFixed(0)}%)`);
+      }
+    } catch (err) {
+      console.error("Classifier prediction error:", err);
+    }
+  }
+  
+  // DECISION: Block if ANY method says to block (hybrid OR logic)
+  if (blockReasons.length > 0) {
+    return {
+      block: true,
+      reasons: blockReasons,
+      matched: matchedItem,
+      sim: maxSim,
+      numMethods: blockReasons.length
+    };
+  }
+  
   return { block: false };
 }
 
 /* ---------------- UI: attach Block button & placeholder ---------------- */
 function createBlockButton() {
   const btn = document.createElement("button");
-  btn.innerText = "Block";
-  btn.title = "Block this video and similar content (AI learns from this)";
-  btn.className = "ytd-ai-blocker-btn";
-  btn.style.cssText = "padding:6px 8px;margin-left:6px;border-radius:4px;border:1px solid #888;background:#fff;cursor:pointer;font-size:12px;";
+  btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/></svg>`;
+  btn.title = "Block this video and similar content";
+  btn.className = "ytd-ai-blocker-btn ytd-ai-block-btn";
+  btn.style.cssText = `
+    padding: 8px;
+    margin-left: 8px;
+    border-radius: 6px;
+    border: 2px solid #ef4444;
+    background: white;
+    cursor: pointer;
+    font-size: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+    position: relative;
+    width: 32px;
+    height: 32px;
+    color: #ef4444;
+  `;
+  
+  // Add hover effect
+  btn.onmouseenter = () => {
+    btn.style.background = '#ef4444';
+    btn.style.color = 'white';
+    btn.style.transform = 'scale(1.1)';
+  };
+  btn.onmouseleave = () => {
+    btn.style.background = 'white';
+    btn.style.color = '#ef4444';
+    btn.style.transform = 'scale(1)';
+  };
+  
   return btn;
 }
 
-function createPlaceholder(matchedTitle, matchedChannel, matchedId, matchedSim) {
+function createDontBlockButton() {
+  const btn = document.createElement("button");
+  btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>`;
+  btn.title = "Don't block - Train AI to keep similar content";
+  btn.className = "ytd-ai-blocker-btn ytd-ai-dontblock-btn";
+  btn.style.cssText = `
+    padding: 8px;
+    margin-left: 6px;
+    border-radius: 6px;
+    border: 2px solid #22c55e;
+    background: white;
+    cursor: pointer;
+    font-size: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+    position: relative;
+    width: 32px;
+    height: 32px;
+    color: #22c55e;
+  `;
+  
+  // Add hover effect
+  btn.onmouseenter = () => {
+    btn.style.background = '#22c55e';
+    btn.style.color = 'white';
+    btn.style.transform = 'scale(1.1)';
+  };
+  btn.onmouseleave = () => {
+    btn.style.background = 'white';
+    btn.style.color = '#22c55e';
+    btn.style.transform = 'scale(1)';
+  };
+  
+  return btn;
+}
+
+function createPlaceholder(matchedTitle, matchedChannel, matchedId, matchedSim, blockReasons = []) {
   const wrapper = document.createElement("div");
   wrapper.className = "ytd-ai-blocker-placeholder";
-  wrapper.style.cssText = "padding:8px;border:1px dashed #ccc;background:#fff;margin:6px 0;font-size:13px;";
-  wrapper.innerHTML = `<div style="font-weight:600">Blocked by AI</div>
-    <div style="font-size:12px;color:#444;margin-top:4px;">Matched: ${escapeHtml(matchedTitle)} — ${escapeHtml(matchedChannel)} (sim ${matchedSim.toFixed(2)})</div>
-    <div style="margin-top:8px;">
-      <button class="ai-unblock-btn" style="margin-right:8px">Show this</button>
-      <button class="ai-negative-btn">Not similar</button>
-    </div>`;
+  wrapper.style.cssText = `
+    padding: 16px;
+    border: 2px solid #e5e7eb;
+    background: linear-gradient(135deg, #ffffff 0%, #f9fafb 100%);
+    margin: 8px 0;
+    font-size: 13px;
+    border-radius: 10px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  `;
+  
+  // Build reason text
+  let reasonText = "";
+  if (blockReasons && blockReasons.length > 0) {
+    const methods = blockReasons.map(r => `<span style="background:#667eea;color:white;padding:2px 8px;border-radius:12px;font-size:10px;font-weight:600;margin-right:6px;">${r.method} ${(r.confidence * 100).toFixed(0)}%</span>`).join("");
+    reasonText = `<div style="margin-top:8px;">${methods}</div>`;
+  }
+  
+  const unblockBtnHTML = `
+    <button class="ai-unblock-btn" style="
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s ease;
+      box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+    " onmouseover="this.style.transform='translateY(-2px)';this.style.boxShadow='0 4px 12px rgba(102, 126, 234, 0.5)'" onmouseout="this.style.transform='translateY(0)';this.style.boxShadow='0 2px 8px rgba(102, 126, 234, 0.3)'">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+        <circle cx="12" cy="12" r="3"/>
+      </svg>
+      Show this
+    </button>
+  `;
+  
+  wrapper.innerHTML = `
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="#ef4444" stroke="#ef4444" stroke-width="2">
+        <circle cx="12" cy="12" r="10" fill="none"/>
+        <line x1="15" y1="9" x2="9" y2="15"/>
+      </svg>
+      <span style="font-weight:700;color:#ef4444;font-size:14px;">Blocked by AI</span>
+    </div>
+    <div style="font-size:12px;color:#6b7280;margin-top:8px;padding:8px;background:#f9fafb;border-radius:6px;">
+      <div style="font-weight:600;color:#374151;margin-bottom:4px;">Matched: ${escapeHtml(matchedTitle)}</div>
+      <div style="font-size:11px;">Channel: ${escapeHtml(matchedChannel)} • Similarity: ${(matchedSim * 100).toFixed(0)}%</div>
+    </div>
+    ${reasonText}
+    <div style="margin-top:12px;">
+      ${unblockBtnHTML}
+    </div>
+  `;
   return wrapper;
 }
 
@@ -289,60 +595,104 @@ function attachButtonsToTile(tile) {
 
   // If a previous cloned button exists (from restored content), remove it so we can attach
   // a fresh button with correct event handlers.
-  const existing = tile.querySelector(".ytd-ai-blocker-btn");
-  if (existing) existing.remove();
+  const existingButtons = tile.querySelectorAll(".ytd-ai-blocker-btn");
+  existingButtons.forEach(btn => btn.remove());
 
-  const btn = createBlockButton();
-  btn.onclick = async (e) => {
+  // Create Block button
+  const blockBtn = createBlockButton();
+  blockBtn.onclick = async (e) => {
     e.stopPropagation();
-    btn.disabled = true;
-    btn.innerText = "Learning...";
+    blockBtn.disabled = true;
+    blockBtn.innerText = "Learning...";
     try {
       const { titleText, channelText } = extractVideoInfoFromTile(tile);
+      
+      console.log(`=== BLOCK CLICKED ===`);
+      console.log(`Video: "${titleText}" by "${channelText}"`);
+      
+      // If this video was previously allowed ("Show this"), remove it from allowed list
+      const wasAllowed = allowedItems.find(a => a.title === titleText && a.channel === channelText);
+      if (wasAllowed) {
+        console.log("This video was previously allowed. Removing from allowed list.");
+        removeAllowedItem(titleText, channelText);
+      }
+      
       const textForEmbed = `${titleText} — ${channelText}`;
       const emb = await embed(textForEmbed);
       const id = addBlockedItem(titleText, channelText, emb);
       // hide tile
-      hideTileWithPlaceholder(tile, id, titleText, channelText, 1.0 /* local placeholder sim */);
+      hideTileWithPlaceholder(tile, id, titleText, channelText, 1.0 /* local placeholder sim */, []);
+      console.log("=== BLOCK COMPLETE ===");
     } catch (err) {
       console.error("Block failed", err);
-      btn.disabled = false;
-      btn.innerText = "Block";
+      blockBtn.disabled = false;
+      blockBtn.innerText = "Block";
     }
   };
 
-  // try to insert the button in common meta container
+  // Create "Don't block" button
+  const dontBlockBtn = createDontBlockButton();
+  dontBlockBtn.onclick = async (e) => {
+    e.stopPropagation();
+    dontBlockBtn.disabled = true;
+    dontBlockBtn.innerText = "Adding...";
+    try {
+      const { titleText, channelText } = extractVideoInfoFromTile(tile);
+      const textForEmbed = `${titleText} — ${channelText}`;
+      const emb = await embed(textForEmbed);
+      addNegativeItem(titleText, channelText, emb);
+      dontBlockBtn.innerText = "✓ Added";
+      dontBlockBtn.style.background = "#c8e6c9";
+      setTimeout(() => {
+        dontBlockBtn.disabled = false;
+        dontBlockBtn.innerText = "Don't block";
+        dontBlockBtn.style.background = "#e8f5e9";
+      }, 2000);
+    } catch (err) {
+      console.error("Don't block failed", err);
+      dontBlockBtn.disabled = false;
+      dontBlockBtn.innerText = "Don't block";
+    }
+  };
+
+  // try to insert the buttons in common meta container
   const insertionPoint = tile.querySelector("#meta, #overlays, #details, #content");
   if (insertionPoint) {
-    insertionPoint.appendChild(btn);
+    insertionPoint.appendChild(blockBtn);
+    insertionPoint.appendChild(dontBlockBtn);
   } else {
     // fallback: append to tile
-    tile.appendChild(btn);
+    tile.appendChild(blockBtn);
+    tile.appendChild(dontBlockBtn);
   }
 
   // Mark as processed to avoid duplicate button attachment
   tile.setAttribute("data-ytd-ai-processed", "true");
 }
 
-function hideTileWithPlaceholder(tile, matchedId, matchedTitle, matchedChannel, matchedSim) {
+function hideTileWithPlaceholder(tile, matchedId, matchedTitle, matchedChannel, matchedSim, blockReasons = []) {
   // replace tile's content with placeholder but keep a reference to restore
-  const placeholder = createPlaceholder(matchedTitle, matchedChannel, matchedId, matchedSim);
+  const placeholder = createPlaceholder(matchedTitle, matchedChannel, matchedId, matchedSim, blockReasons);
   const originalDisplay = tile.style.display;
   const originalChildren = Array.from(tile.childNodes).map(n => n.cloneNode(true));
+  
+  // Extract the ACTUAL video info from the tile BEFORE replacing with placeholder
+  const { titleText, channelText } = extractVideoInfoFromTile(tile);
+  
   tile.innerHTML = "";
   tile.appendChild(placeholder);
 
   const unblockBtn = placeholder.querySelector(".ai-unblock-btn");
-  const negativeBtn = placeholder.querySelector(".ai-negative-btn");
 
   unblockBtn.addEventListener("click", () => {
-    // log for diagnostics
-    console.log("AI Blocker: 'Show this' clicked for", matchedTitle, "—", matchedChannel);
+    console.log("=== SHOW THIS CLICKED ===");
+    console.log("Video info extracted BEFORE placeholder:", titleText, "—", channelText);
+    console.log("Matched info from placeholder:", matchedTitle, "—", matchedChannel);
 
-    // temporarily prevent this exact tile from being immediately re-blocked
-    const key = getCacheKey(`${matchedTitle} — ${matchedChannel}`);
-    recentlyUnblocked.add(key);
-    setTimeout(() => recentlyUnblocked.delete(key), 60_000); // 60s grace
+    // Add to permanently allowed list (using the extracted title/channel)
+    addAllowedItem(titleText, channelText);
+    
+    console.log("Current allowed items after adding:", allowedItems);
 
     // restore original content
     tile.innerHTML = "";
@@ -353,40 +703,9 @@ function hideTileWithPlaceholder(tile, matchedId, matchedTitle, matchedChannel, 
     tile.removeAttribute("data-ytd-ai-processed");
 
     // ensure UI buttons are re-attached for restored content
-    try { attachButtonsToTile(tile); } catch (err) { /* ignore */ }
-
-    // schedule a delayed re-scan for diagnostics and to let other logic settle
-    setTimeout(() => {
-      try {
-        console.log("AI Blocker: re-scanning tile after show-this");
-        scanAndMaybeHideTile(tile);
-      } catch (e) { /* ignore */ }
-    }, 800);
-  });
-
-  negativeBtn.addEventListener("click", async () => {
-    // add the matched blocked example as a negative to prevent similar blocking
-    try {
-      // matchedId corresponds to blockedItems entry. If not found, create negative from current tile
-      let matched = blockedItems.find(x => x.id === matchedId);
-      if (matched) {
-        addNegativeItem(matched.title, matched.channel, Float32Array.from(matched.embedding));
-      } else {
-        const { titleText, channelText } = extractVideoInfoFromTile(tile);
-        const emb = await embed(`${titleText} — ${channelText}`);
-        addNegativeItem(titleText, channelText, emb);
-      }
-      alert("Marked as not similar — the filter will avoid blocking similar items.");
-      // remove placeholder and restore tile
-      tile.innerHTML = "";
-      for (const n of originalChildren) tile.appendChild(n);
-      tile.style.display = originalDisplay;
-
-      // clear the processed flag so the tile can be re-processed
-      tile.removeAttribute("data-ytd-ai-processed");
-    } catch (err) {
-      console.error("Failed to add negative:", err);
-    }
+    try { attachButtonsToTile(tile); } catch (err) { console.error("Button reattach error:", err); }
+    
+    console.log("=== SHOW THIS COMPLETE ===");
   });
 
   // hide tile visually (already replaced by placeholder)
@@ -396,30 +715,22 @@ function hideTileWithPlaceholder(tile, matchedId, matchedTitle, matchedChannel, 
 async function scanAndMaybeHideTile(tile) {
   try {
     const { titleText, channelText } = extractVideoInfoFromTile(tile);
-    const key = getCacheKey(`${titleText} — ${channelText}`);
     
-    // skip tiles the user just unblocked to avoid immediate re-blocking
-    if (recentlyUnblocked.has(key)) {
-      console.log("Skipping recently unblocked tile:", titleText);
-      return;
-    }
-
     // skip tiles that already have a placeholder (already processed and blocked)
     if (tile.querySelector(".ytd-ai-blocker-placeholder")) {
       return;
     }
 
-    // quick exact-match check (require same title AND same channel)
-    const matched = blockedItems.find(b => b.title === titleText && b.channel === channelText);
-    if (matched) {
-      hideTileWithPlaceholder(tile, matched.id, matched.title, matched.channel, 1.0);
-      return;
-    }
-
-    // Check similarity-based blocking
+    // ALWAYS go through shouldBlockText - it checks allowed list first
     const res = await shouldBlockText(titleText, channelText);
     if (res.block) {
-      hideTileWithPlaceholder(tile, res.matched.id, res.matched.title, res.matched.channel, res.sim);
+      // Find the matched item for display purposes
+      const matched = blockedItems.find(b => b.title === titleText && b.channel === channelText);
+      if (matched) {
+        hideTileWithPlaceholder(tile, matched.id, matched.title, matched.channel, 1.0, []);
+      } else {
+        hideTileWithPlaceholder(tile, res.matched?.id || "unknown", res.matched?.title || titleText, res.matched?.channel || channelText, res.sim, res.reasons);
+      }
     }
   } catch (err) {
     console.error("scanAndMaybeHideTile error:", err);
@@ -455,6 +766,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
       for (const k of Object.keys(cache)) runtimeCache.set(k, Float32Array.from(cache[k]));
     }
     if (changes[NEGATIVE_KEY]) negativeItems = changes[NEGATIVE_KEY].newValue || [];
+    if (changes[ALLOWED_KEY]) allowedItems = changes[ALLOWED_KEY].newValue || [];
     if (changes[THRESHOLD_KEY]) {
       const oldThreshold = threshold;
       threshold = changes[THRESHOLD_KEY].newValue || DEFAULT_THRESHOLD;
@@ -469,6 +781,14 @@ chrome.storage.onChanged.addListener((changes, area) => {
     }
     if (changes[MODE_KEY]) mode = changes[MODE_KEY].newValue || "local";
     if (changes[BACKEND_KEY]) backendUrl = changes[BACKEND_KEY].newValue || "";
+    if (changes[CLASSIFIER_ENABLED_KEY]) {
+      classifierEnabled = changes[CLASSIFIER_ENABLED_KEY].newValue || false;
+      console.log("[Content Script] Classifier enabled:", classifierEnabled);
+    }
+    if (changes[CLASSIFIER_KEY]) {
+      classifier.fromJSON(changes[CLASSIFIER_KEY].newValue);
+      console.log("[Content Script] Classifier updated:", classifier.getStats());
+    }
   }
 });
 
@@ -498,6 +818,30 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         scanAndMaybeHideTile(tile).catch(err => console.error("Rescan error:", err));
       }
     });
+    return true; // Keep channel open for async operations
+  }
+  
+  if (request.action === "retrainClassifier") {
+    console.log("[Content Script] Manual classifier retraining requested");
+    maybeTrainClassifier()
+      .then(stats => {
+        if (stats) {
+          sendResponse({ 
+            success: true, 
+            numExamples: stats.numExamples,
+            accuracy: stats.accuracy,
+            message: `Trained on ${stats.numExamples} examples with ${(stats.accuracy * 100).toFixed(1)}% accuracy`
+          });
+        } else {
+          sendResponse({ 
+            success: false, 
+            error: "Not enough training data or classifier disabled"
+          });
+        }
+      })
+      .catch(err => {
+        sendResponse({ success: false, error: err.message });
+      });
     return true; // Keep channel open for async operations
   }
 });
