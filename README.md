@@ -2,7 +2,7 @@
 
 An AI-powered browser extension for intelligent, adaptive content filtering on YouTube. This extension learns from your preferences to automatically hide videos similar to content you've blocked, using state-of-the-art natural language processing.
 
-![Version](https://img.shields.io/badge/version-0.2.0-blue)
+![Version](https://img.shields.io/badge/version-0.3.5-blue)
 ![Manifest](https://img.shields.io/badge/manifest-v3-green)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
@@ -14,13 +14,15 @@ YouTube AI Blocker is an academic research project that demonstrates how AI can 
 
 ### Key Features
 
-- **AI-Powered Filtering**: Uses MiniLM-L6-v2 transformer model for semantic similarity
+- **Hybrid AI Filtering**: Combines similarity matching + ML classifier for better accuracy
 - **Privacy-First**: All processing happens locally in your browser
-- **Learns from You**: Adapts based on your blocking decisions
+- **Learns from You**: Adapts based on your blocking decisions and feedback
 - **Real-Time**: Automatically filters content as you browse
 - **Adjustable**: Fine-tune sensitivity with threshold slider
-- **Reversible**: Undo mistakes with "Show this" button
-- **Negative Feedback**: Mark false positives as "Not similar"
+- **Permanent Allow List**: "Show this" button creates persistent exceptions
+- **Training Data**: "Don't Block" button teaches the classifier what to avoid
+- **Professional UI**: Icon-based design with tooltips and color-coded lists
+- **Transparent Decisions**: See which method blocked content and why
 - **Dual Mode**: Local ONNX inference or optional remote backend
 
 ---
@@ -51,15 +53,19 @@ The MiniLM-L6-v2 model converts the text into a 384-dimensional vector embedding
 
 ### 3. **Automatic Filtering**
 As you browse, the extension:
+- Checks allowed list first (permanent exceptions)
 - Extracts metadata from each video
 - Computes embeddings for new content
-- Calculates cosine similarity with blocked items
-- Hides videos that exceed the similarity threshold
+- **Similarity Matching**: Calculates cosine similarity with blocked items
+- **ML Classifier**: Predicts blocking probability (when trained)
+- Hides videos that exceed the threshold using either method
 
 ### 4. **Continuous Learning**
 - **Positive Examples**: Videos you block teach the system what to filter
-- **Negative Examples**: "Not similar" feedback prevents false positives
-- **Threshold Adjustment**: Real-time sensitivity control
+- **Negative Training**: "Don't Block" teaches classifier what's acceptable (requires 20 examples)
+- **Classifier Training**: Logistic regression learns patterns across all examples (requires 10 blocked + 20 "don't block")
+- **Permanent Exceptions**: "Show this" creates lasting allow list entries
+- **Threshold Adjustment**: Real-time sensitivity control for both methods
 
 ### Why This Matters
 
@@ -120,35 +126,51 @@ npm run build
    - Browse homepage, search results, or any page with videos
 
 2. **Block Unwanted Content**
-   - Each video tile has a "Block" button
-   - Click it on content you want to filter
+   - Each video tile has "Block" and "Don't Block" icon buttons
+   - Click "Block" on content you want to filter
    - The button shows "Learning..." while processing
    - The video is immediately hidden
 
-3. **Automatic Filtering**
+3. **Teach the Classifier**
+   - Click "Don't Block" on acceptable content
+   - This teaches the classifier what NOT to filter
+   - Need 10 blocked + 20 "don't block" items to enable classifier
+   - Open popup and click "Retrain Classifier" after collecting data
+
+4. **Automatic Filtering**
    - Similar videos are automatically hidden as you browse
    - A placeholder shows why each video was blocked
-   - The matched item and similarity score are displayed
+   - Shows method used (similarity, classifier, or both) with scores
 
-4. **Review and Correct**
+5. **Review and Correct**
    - If a video was incorrectly blocked:
-     - Click "Show this" to restore it
-     - Click "Not similar" to teach the system it's different
+     - Click "Show this" to permanently allow it
+     - It will never be blocked again unless you manually click "Block"
 
-5. **Adjust Sensitivity**
+6. **Adjust Sensitivity**
    - Click the extension icon in toolbar
    - Move the threshold slider:
      - **Lower** (0.5-0.7): More aggressive filtering
      - **Higher** (0.7-0.9): More conservative filtering
+   - Threshold applies to both similarity and classifier
    - Changes apply immediately
 
 ### Advanced Features
 
-#### Managing Blocked Items
-- Open the extension popup
-- View all blocked items with titles and channels
-- Remove individual items by clicking "Remove"
-- Clear all blocks with "Clear All Blocks"
+#### Managing Lists
+- Open the extension popup (600px wide interface)
+- **Blocked Items** (purple): View and remove blocked videos
+- **Don't Block Items** (green): View training negatives
+- **Allowed Items** (yellow): View permanent exceptions from "Show this"
+- Each list has individual "Clear All" button
+- Remove individual items with icon button
+
+#### Classifier Training
+- Enable classifier checkbox in popup
+- Need 10 blocked + 20 "don't block" items minimum
+- Click "Retrain Classifier" button
+- Training takes 1-3 seconds
+- Status shows current data counts and training state
 
 #### Cache Management
 - Embeddings are cached to improve performance
@@ -259,19 +281,30 @@ similarity = cosineSimilarity(embedding1, embedding2)
 
 ```javascript
 function shouldBlock(video) {
-  // 1. Check negative examples (user said "not similar")
-  for (neg of negativeExamples) {
-    if (similarity(video, neg) >= threshold)
-      return false;  // Don't block - similar to negative
-  }
+  // 1. Check allowed list (highest priority)
+  if (isInAllowedList(video))
+    return false;  // Never block allowed items
   
-  // 2. Check positive examples (user blocked)
+  // 2. Check similarity matching
+  let simMatch = false;
   for (blocked of blockedItems) {
-    if (similarity(video, blocked) >= threshold)
-      return true;  // Block - similar to blocked item
+    if (similarity(video, blocked) >= threshold) {
+      simMatch = true;
+      break;
+    }
   }
   
-  return false;  // Don't block by default
+  // 3. Check classifier (if enabled and trained)
+  let classifierMatch = false;
+  if (classifierEnabled && classifierTrained) {
+    let probability = classifier.predict(video.embedding);
+    if (probability >= threshold) {
+      classifierMatch = true;
+    }
+  }
+  
+  // 4. Block if either method matches
+  return simMatch || classifierMatch;
 }
 ```
 
@@ -295,9 +328,12 @@ All data stored in Chrome Local Storage:
 | Key | Description | Default |
 |-----|-------------|---------|
 | `ytd_ai_blocked_items_v2` | Positive examples (blocked content) | `[]` |
-| `ytd_ai_negative_v2` | Negative examples ("not similar") | `[]` |
+| `ytd_ai_negative_v2` | "Don't Block" training examples | `[]` |
+| `ytd_ai_allowed_v2` | Permanent allow list ("Show this") | `[]` |
+| `ytd_ai_classifier_v2` | Trained classifier model weights | `null` |
+| `ytd_ai_classifier_enabled_v2` | Classifier on/off state | `false` |
 | `ytd_ai_cache_v2` | Embedding cache (text → vector) | `{}` |
-| `ytd_ai_threshold_v2` | Similarity threshold | `0.7` |
+| `ytd_ai_threshold_v2` | Similarity & classifier threshold | `0.7` |
 | `ytd_ai_mode_v2` | Inference mode | `"local"` |
 | `ytd_ai_backend_v2` | Remote backend URL | `""` |
 
@@ -339,12 +375,13 @@ If using remote mode, your backend must implement:
 youtube-ai-blocker/
 ├── src/
 │   ├── content_script.js    # Main filtering logic
+│   ├── classifier.js        # Logistic regression classifier
 │   ├── background.js        # Service worker
 │   ├── offscreen.js         # ONNX model inference
 │   ├── offscreen.html       # Offscreen document
-│   ├── popup.html           # Extension UI
+│   ├── popup.html           # Extension UI (600px wide)
 │   ├── popup.js             # Popup logic
-│   ├── styles.css           # UI styles
+│   ├── styles.css           # Professional UI styles
 │   └── models/
 │       └── all-minilm-l6-v2/
 │           ├── config.json
@@ -426,10 +463,12 @@ This project is part of academic research into **user-in-the-loop machine learni
 ### Novel Contributions
 
 1. **Semantic Understanding**: Beyond keywords to meaning-based filtering
-2. **Local AI Inference**: Privacy-preserving on-device execution
-3. **Adaptive Learning**: System improves from positive and negative feedback
-4. **Real-Time Operation**: Efficient enough for live browsing
-5. **User Control**: Transparent, reversible, adjustable decisions
+2. **Hybrid Filtering**: Combines similarity matching + ML classifier
+3. **Local AI Inference**: Privacy-preserving on-device execution (both embedding and classifier)
+4. **Adaptive Learning**: System improves from positive and negative feedback
+5. **Real-Time Operation**: Efficient enough for live browsing
+6. **User Control**: Transparent, reversible, adjustable decisions with permanent allow list
+7. **Professional UX**: Icon-based UI with color-coded lists and tooltips
 
 ### Research Questions
 
@@ -521,9 +560,10 @@ This is an academic research project. Contributions are welcome after the initia
 - [ ] Metrics tracking system for academic validation
 - [ ] User study protocol and data collection tools
 - [ ] Automatic threshold adaptation based on user corrections
-- [ ] Lightweight classifier training (logistic regression on embeddings)
+- [x] ~~Lightweight classifier training~~ **COMPLETED** (logistic regression on embeddings)
 - [ ] Video description inclusion in embeddings
 - [ ] Export/import functionality for backups
+- [ ] Decision history logging and review
 - [ ] Multi-platform support (Firefox, Safari)
 - [ ] A/B testing framework
 - [ ] Performance benchmarking suite
@@ -597,4 +637,4 @@ For questions, feedback, or collaboration inquiries:
 
 **Built for better digital experiences and user autonomy**
 
-*Last Updated: February 10, 2026*
+*Last Updated: February 17, 2026*

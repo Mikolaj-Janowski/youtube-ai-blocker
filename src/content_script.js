@@ -388,40 +388,141 @@ async function shouldBlockText(title, channel) {
 /* ---------------- UI: attach Block button & placeholder ---------------- */
 function createBlockButton() {
   const btn = document.createElement("button");
-  btn.innerText = "Block";
-  btn.title = "Block this video and similar content (AI learns from this)";
+  btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/></svg>`;
+  btn.title = "Block this video and similar content";
   btn.className = "ytd-ai-blocker-btn ytd-ai-block-btn";
-  btn.style.cssText = "padding:6px 8px;margin-left:6px;border-radius:4px;border:1px solid #888;background:#fff;cursor:pointer;font-size:12px;";
+  btn.style.cssText = `
+    padding: 8px;
+    margin-left: 8px;
+    border-radius: 6px;
+    border: 2px solid #ef4444;
+    background: white;
+    cursor: pointer;
+    font-size: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+    position: relative;
+    width: 32px;
+    height: 32px;
+    color: #ef4444;
+  `;
+  
+  // Add hover effect
+  btn.onmouseenter = () => {
+    btn.style.background = '#ef4444';
+    btn.style.color = 'white';
+    btn.style.transform = 'scale(1.1)';
+  };
+  btn.onmouseleave = () => {
+    btn.style.background = 'white';
+    btn.style.color = '#ef4444';
+    btn.style.transform = 'scale(1)';
+  };
+  
   return btn;
 }
 
 function createDontBlockButton() {
   const btn = document.createElement("button");
-  btn.innerText = "Don't block";
-  btn.title = "Mark this as content you want to keep seeing (trains AI to not block similar content)";
+  btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>`;
+  btn.title = "Don't block - Train AI to keep similar content";
   btn.className = "ytd-ai-blocker-btn ytd-ai-dontblock-btn";
-  btn.style.cssText = "padding:6px 8px;margin-left:6px;border-radius:4px;border:1px solid #888;background:#e8f5e9;cursor:pointer;font-size:12px;color:#2e7d32;";
+  btn.style.cssText = `
+    padding: 8px;
+    margin-left: 6px;
+    border-radius: 6px;
+    border: 2px solid #22c55e;
+    background: white;
+    cursor: pointer;
+    font-size: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+    position: relative;
+    width: 32px;
+    height: 32px;
+    color: #22c55e;
+  `;
+  
+  // Add hover effect
+  btn.onmouseenter = () => {
+    btn.style.background = '#22c55e';
+    btn.style.color = 'white';
+    btn.style.transform = 'scale(1.1)';
+  };
+  btn.onmouseleave = () => {
+    btn.style.background = 'white';
+    btn.style.color = '#22c55e';
+    btn.style.transform = 'scale(1)';
+  };
+  
   return btn;
 }
 
 function createPlaceholder(matchedTitle, matchedChannel, matchedId, matchedSim, blockReasons = []) {
   const wrapper = document.createElement("div");
   wrapper.className = "ytd-ai-blocker-placeholder";
-  wrapper.style.cssText = "padding:8px;border:1px dashed #ccc;background:#fff;margin:6px 0;font-size:13px;";
+  wrapper.style.cssText = `
+    padding: 16px;
+    border: 2px solid #e5e7eb;
+    background: linear-gradient(135deg, #ffffff 0%, #f9fafb 100%);
+    margin: 8px 0;
+    font-size: 13px;
+    border-radius: 10px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  `;
   
   // Build reason text
   let reasonText = "";
   if (blockReasons && blockReasons.length > 0) {
-    const methods = blockReasons.map(r => `${r.method} (${(r.confidence * 100).toFixed(0)}%)`).join(" + ");
-    reasonText = `<div style="font-size:11px;color:#666;margin-top:2px;">Methods: ${methods}</div>`;
+    const methods = blockReasons.map(r => `<span style="background:#667eea;color:white;padding:2px 8px;border-radius:12px;font-size:10px;font-weight:600;margin-right:6px;">${r.method} ${(r.confidence * 100).toFixed(0)}%</span>`).join("");
+    reasonText = `<div style="margin-top:8px;">${methods}</div>`;
   }
   
-  wrapper.innerHTML = `<div style="font-weight:600">Blocked by AI</div>
-    <div style="font-size:12px;color:#444;margin-top:4px;">Matched: ${escapeHtml(matchedTitle)} — ${escapeHtml(matchedChannel)} (sim ${matchedSim.toFixed(2)})</div>
+  const unblockBtnHTML = `
+    <button class="ai-unblock-btn" style="
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s ease;
+      box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+    " onmouseover="this.style.transform='translateY(-2px)';this.style.boxShadow='0 4px 12px rgba(102, 126, 234, 0.5)'" onmouseout="this.style.transform='translateY(0)';this.style.boxShadow='0 2px 8px rgba(102, 126, 234, 0.3)'">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+        <circle cx="12" cy="12" r="3"/>
+      </svg>
+      Show this
+    </button>
+  `;
+  
+  wrapper.innerHTML = `
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="#ef4444" stroke="#ef4444" stroke-width="2">
+        <circle cx="12" cy="12" r="10" fill="none"/>
+        <line x1="15" y1="9" x2="9" y2="15"/>
+      </svg>
+      <span style="font-weight:700;color:#ef4444;font-size:14px;">Blocked by AI</span>
+    </div>
+    <div style="font-size:12px;color:#6b7280;margin-top:8px;padding:8px;background:#f9fafb;border-radius:6px;">
+      <div style="font-weight:600;color:#374151;margin-bottom:4px;">Matched: ${escapeHtml(matchedTitle)}</div>
+      <div style="font-size:11px;">Channel: ${escapeHtml(matchedChannel)} • Similarity: ${(matchedSim * 100).toFixed(0)}%</div>
+    </div>
     ${reasonText}
-    <div style="margin-top:8px;">
-      <button class="ai-unblock-btn" style="margin-right:8px">Show this</button>
-    </div>`;
+    <div style="margin-top:12px;">
+      ${unblockBtnHTML}
+    </div>
+  `;
   return wrapper;
 }
 

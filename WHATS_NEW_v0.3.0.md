@@ -19,8 +19,8 @@ Your YouTube AI Blocker now features **dual-method filtering** that combines the
 - **Combined Power** - Blocks if EITHER method detects unwanted content
 
 ### 3. **Smart Training**
-- Automatically trains when you have enough data (10 blocked + 5 negatives)
-- Manual "Retrain Now" button for on-demand updates
+- Automatically trains when you have enough data (10 blocked + 20 "Don't Block" items)
+- Manual "Retrain Classifier" button for on-demand updates
 - Training completes in 1-3 seconds
 
 ### 4. **Transparent Decisions**
@@ -29,11 +29,15 @@ Your YouTube AI Blocker now features **dual-method filtering** that combines the
 - Build trust through transparency
 
 ### 5. **Enhanced UI**
-New "Classifier (Hybrid Mode)" section in popup:
-- ✅ Enable/Disable toggle
+Professional interface redesign (v0.3.3-0.3.5):
+- **Icon-based buttons** with hover tooltips instead of text
+- **600px wide popup** for better readability
+- **Color-coded lists**: Purple (blocked), Green ("Don't Block"), Yellow (allowed)
+- **Custom scrollbars** with gradient styling
+- **Three separate lists** in popup with individual clear buttons
+- Classifier section with enable/disable toggle
 - Status display (data requirements, training status)
-- Retrain button
-- Training statistics
+- Manual retrain button
 
 ---
 
@@ -48,7 +52,7 @@ New "Classifier (Hybrid Mode)" section in popup:
 
 2. **Build training data:**
    - Block 10+ videos of content you want to filter
-   - Mark 5+ videos as "Not similar" (different content you DO want)
+   - Mark 20+ videos as "Don't Block" (different content you DO want)
 
 3. **Train the model:**
    - Status will show "Ready to train"
@@ -96,10 +100,11 @@ New "Classifier (Hybrid Mode)" section in popup:
 **Output:** Probability [0-1] that content should be blocked
 
 **Training:**
-- Algorithm: Gradient descent
-- Epochs: 100
+- Algorithm: Gradient descent with regularization
+- Epochs: 150
 - Time: 1-3 seconds for 50 examples
-- Data: All blocked items (positive) + "not similar" items (negative)
+- Data: All blocked items (positive) + "Don't Block" items (negative)
+- Dataset balancing: Undersamples majority class to prevent bias
 
 **Storage:** ~1.5 KB (384 weights + 1 bias)
 
@@ -171,12 +176,12 @@ AND NOT (
 - Blocks new clickbait even with different topics
 
 ### Scenario 3: False Positive Prevention
-**You marked as "Not Similar":** Cooking videos
+**You marked as "Don't Block":** Cooking videos (20+ examples)
 
 **Result:**
-- Even if cooking video has high similarity to blocked content
-- Negative example veto prevents blocking
 - Classifier learns cooking ≠ unwanted content
+- Cooking videos are used as negative training examples
+- Model learns to distinguish between similar-but-acceptable content
 
 ---
 
@@ -195,7 +200,7 @@ AND NOT (
 
 **Too aggressive (blocking too much)?**
 - Increase similarity threshold to 0.8-0.9 (classifier will use same threshold)
-- Add more "not similar" negative examples
+- Add more "Don't Block" training examples
 - Disable classifier temporarily
 
 **Too conservative (missing content)?**
@@ -204,7 +209,7 @@ AND NOT (
 - Retrain classifier with more data
 
 **Classifier not working?**
-- Check: 10+ blocked AND 5+ negatives?
+- Check: 10+ blocked AND 20+ "Don't Block" items?
 - Check: Classifier enabled in popup?
 - Check: Console for training logs?
 
@@ -215,10 +220,10 @@ AND NOT (
 ### Minor
 - Training produces verbose console logs (by design for debugging)
 - No progress bar during 1-3s training
-- Requires balanced data (10 blocked + 5 negatives minimum)
+- Requires balanced data (10 blocked + 20 "Don't Block" minimum)
 
 ### Not Issues (Expected Behavior)
-- Requires 10+ examples to train (intentional for quality)
+- Requires 10+ blocked and 20+ "Don't Block" to train (intentional for quality)
 - Retrains from scratch each time (faster for small datasets)
 - Both methods can block same video (this is good - redundancy!)
 - Classifier uses same threshold as similarity (for consistency)
@@ -313,14 +318,14 @@ Suitable for:
 - [ ] Popup opened
 - [ ] Classifier enabled (checkbox)
 - [ ] At least 10 videos blocked
-- [ ] At least 5 videos marked "not similar"
-- [ ] "Retrain Classifier Now" clicked
+- [ ] At least 20 videos marked "Don't Block"
+- [ ] "Retrain Classifier" clicked
 - [ ] Status shows "✓ Trained on X examples"
 - [ ] Browsing YouTube to test filtering
 
 ---
 
-**Version 0.3.0 - Hybrid Mode - Ready to Deploy!**
+**Version 0.3.0-0.3.5 - Hybrid Mode + Professional UI - Ready to Deploy!**
 
 *Built for better content control and digital autonomy*
 

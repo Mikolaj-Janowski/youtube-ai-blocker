@@ -35,35 +35,52 @@
 
 ### 1.3 UI Components ✅
 - [x] **"Block" button** - Attached to each video tile
-  - Styled inline button
+  - Icon-based design with hover tooltips
   - "Learning..." feedback during processing
   - Disabled state during operation
-- [x] **"Unblock" functionality** - Via placeholder "Show this" button
+  - Removes from allowed list if previously allowed
+- [x] **"Don't Block" button** - Negative training data collection
+  - Icon-based design with hover tooltips
+  - Adds to "Don't Block" training list
+  - Visual feedback on click
+- [x] **"Show this" functionality** - Permanent allow list
   - Restores original content
-  - Grace period to prevent immediate re-blocking (60s)
-- [x] **"Not similar" feedback** - Negative example collection
-  - Adds to negative training set
-  - Prevents similar false positives
-- [x] **Popup UI** (`popup.html`)
+  - Adds to allowed items (persists across sessions)
+  - Only removed when manually clicking "Block"
+- [x] **Popup UI** (`popup.html`) - 600px wide, professional design
   - Mode selection (local ONNX / remote backend)
   - Backend URL configuration
-  - Similarity threshold slider (0.01 - 1.00)
-  - Blocked items list with remove buttons
-  - Clear all blocks button
+  - Similarity threshold slider with visual display (0.01 - 1.00)
+  - Classifier enable/disable toggle with status
+  - Manual classifier retraining button
+  - Blocked items list with icon-based remove buttons
+  - "Don't Block" items list (green styling)
+  - Allowed items list (yellow styling)
+  - Individual clear buttons for each list
   - Clear embedding cache button
+  - Color-coded buttons and sections
+  - Custom scrollbars
 - [x] **Placeholder UI** for blocked content
   - Shows which item triggered the block
-  - Displays similarity score
-  - "Show this" and "Not similar" action buttons
+  - Displays similarity score and/or classifier probability
+  - Shows which method(s) caused the block
+  - "Show this" button only (no other actions on placeholders)
 
-**Status:** ✅ Complete interactive UI with user feedback mechanisms
+**Status:** ✅ Complete interactive UI with professional design and comprehensive user feedback
 
 ### 1.4 Local Database ✅
 - [x] **Chrome Local Storage** implementation
 - [x] **Blocked items storage** (`ytd_ai_blocked_items_v2`)
   - Stores: id, title, channel, embedding (384-dim vector)
 - [x] **Negative examples storage** (`ytd_ai_negative_v2`)
-  - Prevents false positives through user feedback
+  - "Don't Block" items for classifier training
+  - Used as negative training examples
+- [x] **Allowed items storage** (`ytd_ai_allowed_v2`)
+  - Permanent allow list from "Show this" actions
+  - Takes priority over all blocking logic
+- [x] **Classifier storage** (`ytd_ai_classifier_v2`, `ytd_ai_classifier_enabled_v2`)
+  - Trained model weights and bias
+  - Enable/disable state
 - [x] **Embedding cache** (`ytd_ai_cache_v2`)
   - Persistent cache: text → embedding array
   - Runtime cache: text → Float32Array (in-memory)
@@ -74,7 +91,7 @@
   - Backend URL (`ytd_ai_backend_v2`)
 - [x] **Storage change listeners** - Real-time sync across extension components
 
-**Status:** ✅ Robust local storage with caching and synchronization
+**Status:** ✅ Comprehensive local storage with multiple data structures and synchronization
 
 ### 1.5 AI Component ✅
 - [x] **Local ONNX execution** via `@xenova/transformers`
@@ -99,15 +116,18 @@
 
 ### 1.6 Filtering Mechanism ✅
 - [x] **Automatic content hiding** - Replaces video tiles with placeholders
-- [x] **Exact match filtering** - Title + channel comparison
+- [x] **Hybrid filtering** - Similarity matching + ML classifier
+- [x] **Allowed items priority** - Checks allow list first, bypasses all blocking
 - [x] **Semantic similarity filtering** - Embedding-based matching
-- [x] **Negative example checking** - Prevents blocking if similar to "not similar" items
-- [x] **Threshold-based decisions** - Configurable similarity cutoff (default: 0.70)
+- [x] **Classifier prediction** - Logistic regression on embeddings (when enabled and trained)
+- [x] **Negative example training** - "Don't Block" items used in classifier training
+- [x] **Threshold-based decisions** - Configurable cutoff (default: 0.70)
+  - Applied to both similarity and classifier predictions
 - [x] **Real-time threshold updates** - Immediate re-scanning on slider change
-- [x] **Grace period for unblocked items** - 60-second cooldown
+- [x] **Transparent decision display** - Shows which method(s) blocked content
 - [x] **Viewport-aware processing** - Only processes visible/near-visible content
 
-**Status:** ✅ Sophisticated multi-layer filtering with adaptive behavior
+**Status:** ✅ Advanced hybrid filtering system with multiple decision layers
 
 ---
 
@@ -148,19 +168,23 @@
 - [x] **Positive examples** - Blocked items stored with embeddings
 - [x] **Negative examples** - "Not similar" feedback collected
 
-### 3.3 Training/Updating Mechanisms ✅ (Partial)
+### 3.3 Training/Updating Mechanisms ✅ (Mostly Complete)
 - [x] **Embedding similarity thresholding** - Primary mechanism
 - [x] **Adaptive threshold** - User can adjust via slider
 - [x] **Real-time threshold updates** - Immediate effect on filtering
-- [x] **Negative example filtering** - Prevents false positives
+- [x] **Negative example filtering** - "Don't Block" items as training data
+- [x] **Small classifier training** - ✅ Logistic regression on embeddings implemented
+  - Trains with 10+ blocked items and 20+ "Don't Block" items
+  - Uses same threshold as similarity matching
+  - Gradient descent optimization with regularization
+  - Dataset balancing to prevent bias
+- [x] **Hybrid filtering** - Combines similarity matching + classifier predictions
+- [x] **Allowed items list** - Permanent allow list via "Show this" button
 - [ ] ⚠️ **Automatic threshold adaptation** - Not yet implemented
   - Could track false positive/negative rates
   - Adjust threshold automatically over time
-- [ ] ⚠️ **Small classifier training** - Not yet implemented
-  - Logistic regression or k-NN on embeddings
-  - Would improve personalization beyond threshold
 
-**Status:** ✅ Core adaptive mechanisms in place, advanced learning pending
+**Status:** ✅ Advanced hybrid system operational, auto-adaptation pending
 
 ### 3.4 Privacy ✅
 - [x] **All data stays local** - Chrome Local Storage
@@ -219,19 +243,23 @@
 
 ### 5.2 User Experience Enhancements ✅
 - [x] **Immediate visual feedback** - "Learning..." state
-- [x] **Undo functionality** - "Show this" restores content
-- [x] **Grace period** - Prevents re-blocking after unblock
+- [x] **Permanent allow list** - "Show this" persists across sessions
 - [x] **Settings persistence** - Remembers user preferences
 - [x] **Real-time sync** - Changes in popup affect content script immediately
-- [x] **Similarity transparency** - Shows match score
+- [x] **Decision transparency** - Shows match scores and method used
+- [x] **Icon-based UI** - Professional button design with hover tooltips
+- [x] **Color-coded lists** - Visual distinction between blocked/allowed/don't-block
+- [x] **Wide popup layout** - 600px for better readability
+- [x] **Custom scrollbars** - Polished visual design
 
 ### 5.3 Error Handling ✅
 - [x] **Try-catch blocks** - Graceful error handling
 - [x] **Console error logging** - Debugging information
 - [x] **Model initialization checks** - Ensures model loaded before use
 - [x] **Message passing error handling** - Handles failed communications
+- [x] **Classifier training validation** - Checks data requirements before training
 
-**Status:** ✅ Production-quality implementation
+**Status:** ✅ Production-quality implementation with polished UX
 
 ---
 
@@ -263,23 +291,25 @@
 
 ## OVERALL PROJECT STATUS
 
-### ✅ COMPLETED (70%)
-1. **Prototype Development** - Fully functional Chrome extension
+### ✅ COMPLETED (85%)
+1. **Prototype Development** - Fully functional Chrome extension with professional UI
 2. **Network Selection** - MiniLM-L6-v2 successfully integrated
 3. **Core Training Plan** - Embedding-based filtering operational
-4. **Privacy Architecture** - Local-first, user-controlled system
-5. **Performance Optimization** - Production-ready efficiency
+4. **Classifier Training** - ✅ Hybrid mode with logistic regression implemented
+5. **Privacy Architecture** - Local-first, user-controlled system
+6. **Performance Optimization** - Production-ready efficiency
+7. **User Interface** - Professional design with icons, tooltips, and color-coding
 
-### ⚠️ PARTIALLY COMPLETE (20%)
-1. **Advanced Learning** - Adaptive threshold manual, not automatic
-2. **Logging** - Basic transparency, needs structured system
-3. **Documentation** - Code commented, but README and academic docs minimal
+### ⚠️ PARTIALLY COMPLETE (10%)
+1. **Advanced Learning** - Classifier trains manually, not automatic
+2. **Logging** - Decision transparency in placeholders, needs structured history
+3. **Documentation** - Code commented, README complete, academic validation pending
 
-### ❌ NOT STARTED (10%)
+### ❌ NOT STARTED (5%)
 1. **Verification Metrics** - No quantitative tracking system
 2. **User Studies** - No formal testing protocol or participants
-3. **Classifier Training** - Optional advanced personalization not implemented
-4. **Comprehensive Documentation** - Academic paper structure missing
+3. **Automatic Threshold Adaptation** - Manual adjustment only
+4. **Decision History Export** - No persistent logging or export
 
 ---
 
@@ -316,10 +346,10 @@
    - Review and correct mistakes
    - Export for analysis
 
-6. **Implement lightweight classifier**
-   - Logistic regression on embeddings
-   - Train incrementally on user feedback
-   - Compare with pure threshold approach
+6. ~~**Implement lightweight classifier**~~ ✅ **COMPLETED**
+   - ✅ Logistic regression on embeddings
+   - ✅ Trains on user feedback (10 blocked + 20 "don't block")
+   - ✅ Hybrid mode combining similarity + classifier
 
 ### LOW PRIORITY (Nice to Have)
 7. **Video descriptions** - Currently only uses title + channel
@@ -335,8 +365,10 @@
 2. **No error UI** - Errors only logged to console
 3. **Cache can grow unbounded** - No cache size limit or LRU eviction
 4. **No backup/restore** - User data not exportable for backup
-5. **Single similarity threshold** - Same for all contexts
+5. **Single similarity threshold** - Same for all contexts (classifier uses same threshold)
 6. **No category-based filtering** - All content treated uniformly
+7. **Classifier retrains from scratch** - No incremental learning (acceptable for small datasets)
+8. **No decision history** - Blocking decisions not logged persistently
 
 ---
 
@@ -345,15 +377,17 @@
 **The core prototype is complete and functional.** The extension successfully:
 - Filters YouTube content based on user preferences
 - Uses state-of-the-art AI (MiniLM-L6-v2) for semantic understanding
-- Learns from user feedback (positive and negative examples)
+- Implements hybrid filtering (similarity matching + logistic regression classifier)
+- Learns from user feedback (blocked items + "don't block" training data)
+- Maintains permanent allow list for user control
 - Operates entirely locally for privacy
-- Provides transparent, reversible filtering decisions
+- Provides transparent, reversible filtering decisions with professional UI
 
-**What remains is primarily evaluation and documentation:**
+**What remains is primarily evaluation:**
 - Quantitative metrics system for academic validation
 - User studies to demonstrate effectiveness
-- Comprehensive documentation (README + academic paper structure)
-- Optional advanced features (auto-adaptation, classifier training)
+- Decision history logging and export
+- Optional advanced features (auto-adaptation)
 
 **This is an excellent foundation for a research project or thesis.** The technical implementation demonstrates strong software engineering and ML integration skills. With proper evaluation and documentation, this could contribute meaningfully to the fields of personalized content filtering, user-in-the-loop ML, and privacy-preserving AI.
 

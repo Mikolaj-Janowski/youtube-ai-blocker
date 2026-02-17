@@ -216,7 +216,20 @@ document.addEventListener("DOMContentLoaded", async () => {
     items.forEach(it => {
       const el = document.createElement("div");
       el.className = "blocked-item";
-      el.innerHTML = `<div><strong>${escapeHtml(it.title)}</strong></div><div class="meta">${escapeHtml(it.channel)}</div><div style="margin-top:6px;"><button data-id="${it.id}" class="removeBtn">Remove</button></div>`;
+      el.innerHTML = `
+        <div>
+          <strong>${escapeHtml(it.title)}</strong>
+        </div>
+        <div class="meta">${escapeHtml(it.channel)}</div>
+        <div style="margin-top:6px;">
+          <button data-id="${it.id}" class="removeBtn" title="Remove this blocked item">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+              <line x1="18" y1="6" x2="6" y2="18"/>
+              <line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+      `;
       blockedList.appendChild(el);
     });
     blockedList.querySelectorAll(".removeBtn").forEach(btn => {
