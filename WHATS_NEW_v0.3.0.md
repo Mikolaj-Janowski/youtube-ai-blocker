@@ -111,12 +111,14 @@ New "Classifier (Hybrid Mode)" section in popup:
 Should Block = (
     Similarity >= threshold (default 0.7)
     OR
-    Classifier probability >= 0.5
+    Classifier probability >= threshold (same value)
 )
 AND NOT (
     Similar to "not similar" example
 )
 ```
+
+**Consistency:** Classifier uses the same threshold as similarity matching
 
 **Priority:** Negative examples always prevent blocking (veto power)
 
@@ -187,17 +189,17 @@ AND NOT (
 | `ytd_ai_classifier_enabled_v2` | Classifier on/off | `false` |
 | `ytd_ai_classifier_v2` | Trained model (weights) | `null` |
 | Similarity threshold | Matching cutoff | `0.7` |
-| Classifier threshold | Probability cutoff | `0.5` (fixed) |
+| Classifier threshold | Uses similarity threshold | Same as above |
 
 ### Tuning Tips
 
 **Too aggressive (blocking too much)?**
-- Increase similarity threshold to 0.8-0.9
+- Increase similarity threshold to 0.8-0.9 (classifier will use same threshold)
 - Add more "not similar" negative examples
 - Disable classifier temporarily
 
 **Too conservative (missing content)?**
-- Decrease similarity threshold to 0.5-0.6
+- Decrease similarity threshold to 0.5-0.6 (classifier will use same threshold)
 - Add more blocked examples
 - Retrain classifier with more data
 
@@ -213,12 +215,13 @@ AND NOT (
 ### Minor
 - Training produces verbose console logs (by design for debugging)
 - No progress bar during 1-3s training
-- Classifier threshold not user-adjustable yet
+- Requires balanced data (10 blocked + 5 negatives minimum)
 
 ### Not Issues (Expected Behavior)
 - Requires 10+ examples to train (intentional for quality)
 - Retrains from scratch each time (faster for small datasets)
 - Both methods can block same video (this is good - redundancy!)
+- Classifier uses same threshold as similarity (for consistency)
 
 ---
 

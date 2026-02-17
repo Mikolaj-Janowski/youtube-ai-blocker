@@ -3,6 +3,7 @@ const STORAGE_KEY = "ytd_ai_blocked_items_v2";
 const THRESHOLD_KEY = "ytd_ai_threshold_v2";
 const CACHE_KEY = "ytd_ai_cache_v2";
 const NEGATIVE_KEY = "ytd_ai_negative_v2";
+const ALLOWED_KEY = "ytd_ai_allowed_v2";
 const MODE_KEY = "ytd_ai_mode_v2";
 const BACKEND_KEY = "ytd_ai_backend_v2";
 const CLASSIFIER_KEY = "ytd_ai_classifier_v2";
@@ -10,11 +11,15 @@ const CLASSIFIER_ENABLED_KEY = "ytd_ai_classifier_enabled_v2";
 const DEFAULT_THRESHOLD = 0.7;
 const DEFAULT_MODE = "local";
 const MIN_POSITIVES = 10;
-const MIN_NEGATIVES = 5;
+const MIN_NEGATIVES = 20;
 
 document.addEventListener("DOMContentLoaded", async () => {
   const blockedList = document.getElementById("blockedList");
+  const negativeList = document.getElementById("negativeList");
+  const allowedList = document.getElementById("allowedList");
   const clearAllBtn = document.getElementById("clearAll");
+  const clearNegativesBtn = document.getElementById("clearNegatives");
+  const clearAllowedBtn = document.getElementById("clearAllowed");
   const thresholdInput = document.getElementById("threshold");
   const thVal = document.getElementById("thVal");
   const clearCacheBtn = document.getElementById("clearCache");
@@ -27,8 +32,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   // load settings
   chrome.storage.local.get([
-    THRESHOLD_KEY, STORAGE_KEY, MODE_KEY, BACKEND_KEY, 
-    CLASSIFIER_ENABLED_KEY, CLASSIFIER_KEY, NEGATIVE_KEY
+    THRESHOLD_KEY, STORAGE_KEY, NEGATIVE_KEY, ALLOWED_KEY, MODE_KEY, BACKEND_KEY, 
+    CLASSIFIER_ENABLED_KEY, CLASSIFIER_KEY
   ], (data) => {
     const th = data[THRESHOLD_KEY] || DEFAULT_THRESHOLD;
     console.log("Loading threshold from storage:", th);
@@ -39,6 +44,8 @@ document.addEventListener("DOMContentLoaded", async () => {
     backendUrlInput.value = data[BACKEND_KEY] || "";
     classifierEnabledCheckbox.checked = data[CLASSIFIER_ENABLED_KEY] || false;
     renderBlocked(data[STORAGE_KEY] || []);
+    renderNegatives(data[NEGATIVE_KEY] || []);
+    renderAllowed(data[ALLOWED_KEY] || []);
     updateClassifierStatus(data[STORAGE_KEY] || [], data[NEGATIVE_KEY] || [], data[CLASSIFIER_KEY]);
     backendRow.style.display = (modeSelect.value === "remote") ? "block" : "none";
   });
@@ -86,6 +93,20 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (!confirm("Clear all blocked items?")) return;
     chrome.storage.local.set({ [STORAGE_KEY]: [] }, () => {
       renderBlocked([]);
+    });
+  });
+
+  clearNegativesBtn.addEventListener("click", () => {
+    if (!confirm("Clear all 'Don't block' items? This will reset classifier training data.")) return;
+    chrome.storage.local.set({ [NEGATIVE_KEY]: [] }, () => {
+      renderNegatives([]);
+    });
+  });
+
+  clearAllowedBtn.addEventListener("click", () => {
+    if (!confirm("Clear all allowed items? They may be blocked again if they match filters.")) return;
+    chrome.storage.local.set({ [ALLOWED_KEY]: [] }, () => {
+      renderAllowed([]);
     });
   });
 
@@ -140,6 +161,12 @@ document.addEventListener("DOMContentLoaded", async () => {
   chrome.storage.onChanged.addListener((changes) => {
     if (changes[STORAGE_KEY]) {
       renderBlocked(changes[STORAGE_KEY].newValue || []);
+    }
+    if (changes[NEGATIVE_KEY]) {
+      renderNegatives(changes[NEGATIVE_KEY].newValue || []);
+    }
+    if (changes[ALLOWED_KEY]) {
+      renderAllowed(changes[ALLOWED_KEY].newValue || []);
     }
     // Update classifier status if relevant data changed
     if (changes[STORAGE_KEY] || changes[NEGATIVE_KEY] || changes[CLASSIFIER_KEY]) {
@@ -201,6 +228,34 @@ document.addEventListener("DOMContentLoaded", async () => {
           chrome.storage.local.set({ [STORAGE_KEY]: filtered });
         });
       });
+    });
+  }
+
+  function renderNegatives(items) {
+    negativeList.innerHTML = "";
+    if (!items || items.length === 0) {
+      negativeList.innerHTML = '<div style="color:#999;font-style:italic;">None (click "Don\'t block" on videos to train the classifier)</div>';
+      return;
+    }
+    items.forEach(it => {
+      const el = document.createElement("div");
+      el.style.cssText = "padding:6px;border-bottom:1px solid #eee;background:#f1f8f4;";
+      el.innerHTML = `<div style="font-weight:500;color:#2e7d32;">${escapeHtml(it.title)}</div><div style="font-size:11px;color:#666;">${escapeHtml(it.channel)}</div>`;
+      negativeList.appendChild(el);
+    });
+  }
+
+  function renderAllowed(items) {
+    allowedList.innerHTML = "";
+    if (!items || items.length === 0) {
+      allowedList.innerHTML = '<div style="color:#999;font-style:italic;">None (click "Show this" on blocked videos to allow them)</div>';
+      return;
+    }
+    items.forEach(it => {
+      const el = document.createElement("div");
+      el.style.cssText = "padding:6px;border-bottom:1px solid #eee;";
+      el.innerHTML = `<div style="font-weight:500;">${escapeHtml(it.title)}</div><div style="font-size:11px;color:#666;">${escapeHtml(it.channel)}</div>`;
+      allowedList.appendChild(el);
     });
   }
 

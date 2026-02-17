@@ -13,7 +13,8 @@ import { LogisticRegressionClassifier } from './classifier.js';
 /* ---------------- Configuration keys ---------------- */
 const STORAGE_KEY = "ytd_ai_blocked_items_v2"; // blocked positives
 const CACHE_KEY = "ytd_ai_cache_v2";           // map text -> embedding array
-const NEGATIVE_KEY = "ytd_ai_negative_v2";     // negative examples
+const NEGATIVE_KEY = "ytd_ai_negative_v2";     // negative examples ("don't block")
+const ALLOWED_KEY = "ytd_ai_allowed_v2";       // explicitly allowed items (user clicked "show this")
 const THRESHOLD_KEY = "ytd_ai_threshold_v2";
 const MODE_KEY = "ytd_ai_mode_v2";             // 'local' or 'remote'
 const BACKEND_KEY = "ytd_ai_backend_v2";
@@ -22,14 +23,14 @@ const CLASSIFIER_ENABLED_KEY = "ytd_ai_classifier_enabled_v2"; // on/off toggle
 
 const DEFAULT_THRESHOLD = 0.7;
 const EMBED_BATCH_SIZE = 8;  // batch size for embedding in local mode
-const CLASSIFIER_THRESHOLD = 0.5; // probability threshold for classifier predictions
 const MIN_POSITIVES_FOR_TRAINING = 10; // minimum blocked items to train classifier
-const MIN_NEGATIVES_FOR_TRAINING = 5;  // minimum negative examples to train classifier
+const MIN_NEGATIVES_FOR_TRAINING = 20;  // minimum negative examples to train classifier
 
 /* ---------------- Globals ---------------- */
 let extractor = null; // Not used - delegated to background worker
 let blockedItems = []; // {id, title, channel, embedding}
-let negativeItems = []; // {id, title, channel, embedding}
+let negativeItems = []; // {id, title, channel, embedding} - "don't block" examples
+let allowedItems = []; // {id, title, channel, timestamp} - explicitly allowed by user
 let cache = {}; // persistent cache loaded from storage (title->embedding array)
 let runtimeCache = new Map(); // in-memory cache title->Float32Array
 let threshold = DEFAULT_THRESHOLD;
@@ -66,13 +67,14 @@ function saveToStorage(keys) {
 /* ---------------- Storage load ---------------- */
 async function loadState() {
   const data = await new Promise(res => chrome.storage.local.get([
-    STORAGE_KEY, CACHE_KEY, NEGATIVE_KEY, THRESHOLD_KEY, MODE_KEY, BACKEND_KEY,
+    STORAGE_KEY, CACHE_KEY, NEGATIVE_KEY, ALLOWED_KEY, THRESHOLD_KEY, MODE_KEY, BACKEND_KEY,
     CLASSIFIER_KEY, CLASSIFIER_ENABLED_KEY
   ], res));
   
   blockedItems = data[STORAGE_KEY] || [];
   cache = data[CACHE_KEY] || {};
   negativeItems = data[NEGATIVE_KEY] || [];
+  allowedItems = data[ALLOWED_KEY] || [];
   threshold = data[THRESHOLD_KEY] || DEFAULT_THRESHOLD;
   mode = data[MODE_KEY] || "local";
   backendUrl = data[BACKEND_KEY] || "";
@@ -204,6 +206,20 @@ function addNegativeItem(title, channel, embedding) {
   return id;
 }
 
+function addAllowedItem(title, channel) {
+  const id = `allow_${Date.now()}_${Math.floor(Math.random()*10000)}`;
+  const item = { id, title, channel, timestamp: Date.now() };
+  allowedItems.push(item);
+  saveToStorage({ [ALLOWED_KEY]: allowedItems });
+  console.log(`Added to allowed list: "${title}" by "${channel}". Total allowed: ${allowedItems.length}`);
+  return id;
+}
+
+function removeAllowedItem(title, channel) {
+  allowedItems = allowedItems.filter(a => !(a.title === title && a.channel === channel));
+  saveToStorage({ [ALLOWED_KEY]: allowedItems });
+}
+
 function removeBlockedById(id) {
   blockedItems = blockedItems.filter(x => x.id !== id);
   saveToStorage({ [STORAGE_KEY]: blockedItems });
@@ -226,24 +242,62 @@ async function maybeTrainClassifier() {
   console.log(`Training classifier on ${blockedItems.length} positives and ${negativeItems.length} negatives...`);
   
   // Prepare training data
+  const positives = [];
+  const negatives = [];
+  
+  // Collect positive examples (blocked items)
+  for (const item of blockedItems) {
+    positives.push(Float32Array.from(item.embedding));
+  }
+  
+  // Collect negative examples
+  for (const item of negativeItems) {
+    negatives.push(Float32Array.from(item.embedding));
+  }
+  
+  // Balance dataset to prevent bias toward majority class
+  const minCount = Math.min(positives.length, negatives.length);
+  const maxCount = Math.max(positives.length, negatives.length);
+  const imbalanceRatio = maxCount / minCount;
+  
+  console.log(`Data balance: ${positives.length} positives, ${negatives.length} negatives (ratio: ${imbalanceRatio.toFixed(2)})`);
+  
+  // If severely imbalanced (>2:1), balance the dataset
   const X = [];
   const y = [];
   
-  // Add positive examples (blocked items)
-  for (const item of blockedItems) {
-    X.push(Float32Array.from(item.embedding));
-    y.push(1);
+  if (imbalanceRatio > 2.0) {
+    console.log("Balancing dataset due to class imbalance...");
+    // Undersample majority class
+    const balancedCount = minCount;
+    
+    // Shuffle and take equal amounts
+    const shuffledPos = [...positives].sort(() => Math.random() - 0.5);
+    const shuffledNeg = [...negatives].sort(() => Math.random() - 0.5);
+    
+    for (let i = 0; i < balancedCount; i++) {
+      X.push(shuffledPos[i]);
+      y.push(1);
+      X.push(shuffledNeg[i]);
+      y.push(0);
+    }
+    console.log(`Balanced to ${balancedCount} examples per class`);
+  } else {
+    // Use all data if reasonably balanced
+    for (const emb of positives) {
+      X.push(emb);
+      y.push(1);
+    }
+    for (const emb of negatives) {
+      X.push(emb);
+      y.push(0);
+    }
   }
   
-  // Add negative examples
-  for (const item of negativeItems) {
-    X.push(Float32Array.from(item.embedding));
-    y.push(0);
-  }
-  
-  // Train classifier
+  // Train classifier with reduced regularization for better fit
   try {
-    const stats = classifier.train(X, y, 100, true);
+    classifier.regularization = 0.0001; // Lower regularization
+    const stats = classifier.train(X, y, 150, true); // More epochs
     console.log("Classifier training complete:", stats);
     
     // Save classifier to storage
@@ -259,6 +313,14 @@ async function maybeTrainClassifier() {
 /* ---------------- Determine blocking (Hybrid Mode) ---------------- */
 async function shouldBlockText(title, channel) {
   if (!blockedItems || blockedItems.length === 0) return { block: false };
+  
+  // STEP 0: Check if explicitly allowed by user (clicked "Show this")
+  const isAllowed = allowedItems.find(a => a.title === title && a.channel === channel);
+  if (isAllowed) {
+    console.log(`Video "${title}" is explicitly allowed (Show this was clicked)`);
+    return { block: false, reason: "explicitly_allowed" };
+  }
+  
   const text = `${title} — ${channel}`;
   const emb = await embed(text);
   
@@ -266,13 +328,8 @@ async function shouldBlockText(title, channel) {
   let maxSim = 0;
   let matchedItem = null;
   
-  // STEP 1: Check negative items (veto power - if similar to negative, never block)
-  for (const neg of negativeItems) {
-    const simNeg = cosineSimilarity(emb, Float32Array.from(neg.embedding));
-    if (simNeg >= threshold) {
-      return { block: false, reason: "matched_negative", simNeg };
-    }
-  }
+  // STEP 1: Check negative items ("don't block" - these are TRAINING data, not veto)
+  // Negatives are now part of classifier training, not a separate veto check
   
   // STEP 2: Check similarity to blocked items
   for (const b of blockedItems) {
@@ -291,18 +348,24 @@ async function shouldBlockText(title, channel) {
   }
   
   // STEP 3: Check classifier prediction (if enabled and trained)
+  // Use the same threshold as similarity matching for consistency
   if (classifierEnabled && classifier && classifier.isReady()) {
     try {
       const prob = classifier.predict(emb);
-      if (prob >= CLASSIFIER_THRESHOLD) {
+      
+      // Classifier should respect user's threshold setting
+      // Use threshold as classifier probability cutoff
+      if (prob >= threshold) {
         blockReasons.push({
           method: "classifier",
           confidence: prob
         });
       }
       
-      // Log classifier prediction for debugging
-      console.log(`Classifier prediction for "${title}": ${(prob * 100).toFixed(1)}%`);
+      // Log classifier prediction for debugging (only if above 30% to reduce noise)
+      if (prob >= 0.3) {
+        console.log(`Classifier prediction for "${title}": ${(prob * 100).toFixed(1)}% (threshold: ${(threshold * 100).toFixed(0)}%)`);
+      }
     } catch (err) {
       console.error("Classifier prediction error:", err);
     }
@@ -327,8 +390,17 @@ function createBlockButton() {
   const btn = document.createElement("button");
   btn.innerText = "Block";
   btn.title = "Block this video and similar content (AI learns from this)";
-  btn.className = "ytd-ai-blocker-btn";
+  btn.className = "ytd-ai-blocker-btn ytd-ai-block-btn";
   btn.style.cssText = "padding:6px 8px;margin-left:6px;border-radius:4px;border:1px solid #888;background:#fff;cursor:pointer;font-size:12px;";
+  return btn;
+}
+
+function createDontBlockButton() {
+  const btn = document.createElement("button");
+  btn.innerText = "Don't block";
+  btn.title = "Mark this as content you want to keep seeing (trains AI to not block similar content)";
+  btn.className = "ytd-ai-blocker-btn ytd-ai-dontblock-btn";
+  btn.style.cssText = "padding:6px 8px;margin-left:6px;border-radius:4px;border:1px solid #888;background:#e8f5e9;cursor:pointer;font-size:12px;color:#2e7d32;";
   return btn;
 }
 
@@ -349,7 +421,6 @@ function createPlaceholder(matchedTitle, matchedChannel, matchedId, matchedSim, 
     ${reasonText}
     <div style="margin-top:8px;">
       <button class="ai-unblock-btn" style="margin-right:8px">Show this</button>
-      <button class="ai-negative-btn">Not similar</button>
     </div>`;
   return wrapper;
 }
@@ -423,35 +494,75 @@ function attachButtonsToTile(tile) {
 
   // If a previous cloned button exists (from restored content), remove it so we can attach
   // a fresh button with correct event handlers.
-  const existing = tile.querySelector(".ytd-ai-blocker-btn");
-  if (existing) existing.remove();
+  const existingButtons = tile.querySelectorAll(".ytd-ai-blocker-btn");
+  existingButtons.forEach(btn => btn.remove());
 
-  const btn = createBlockButton();
-  btn.onclick = async (e) => {
+  // Create Block button
+  const blockBtn = createBlockButton();
+  blockBtn.onclick = async (e) => {
     e.stopPropagation();
-    btn.disabled = true;
-    btn.innerText = "Learning...";
+    blockBtn.disabled = true;
+    blockBtn.innerText = "Learning...";
     try {
       const { titleText, channelText } = extractVideoInfoFromTile(tile);
+      
+      console.log(`=== BLOCK CLICKED ===`);
+      console.log(`Video: "${titleText}" by "${channelText}"`);
+      
+      // If this video was previously allowed ("Show this"), remove it from allowed list
+      const wasAllowed = allowedItems.find(a => a.title === titleText && a.channel === channelText);
+      if (wasAllowed) {
+        console.log("This video was previously allowed. Removing from allowed list.");
+        removeAllowedItem(titleText, channelText);
+      }
+      
       const textForEmbed = `${titleText} — ${channelText}`;
       const emb = await embed(textForEmbed);
       const id = addBlockedItem(titleText, channelText, emb);
       // hide tile
-      hideTileWithPlaceholder(tile, id, titleText, channelText, 1.0 /* local placeholder sim */);
+      hideTileWithPlaceholder(tile, id, titleText, channelText, 1.0 /* local placeholder sim */, []);
+      console.log("=== BLOCK COMPLETE ===");
     } catch (err) {
       console.error("Block failed", err);
-      btn.disabled = false;
-      btn.innerText = "Block";
+      blockBtn.disabled = false;
+      blockBtn.innerText = "Block";
     }
   };
 
-  // try to insert the button in common meta container
+  // Create "Don't block" button
+  const dontBlockBtn = createDontBlockButton();
+  dontBlockBtn.onclick = async (e) => {
+    e.stopPropagation();
+    dontBlockBtn.disabled = true;
+    dontBlockBtn.innerText = "Adding...";
+    try {
+      const { titleText, channelText } = extractVideoInfoFromTile(tile);
+      const textForEmbed = `${titleText} — ${channelText}`;
+      const emb = await embed(textForEmbed);
+      addNegativeItem(titleText, channelText, emb);
+      dontBlockBtn.innerText = "✓ Added";
+      dontBlockBtn.style.background = "#c8e6c9";
+      setTimeout(() => {
+        dontBlockBtn.disabled = false;
+        dontBlockBtn.innerText = "Don't block";
+        dontBlockBtn.style.background = "#e8f5e9";
+      }, 2000);
+    } catch (err) {
+      console.error("Don't block failed", err);
+      dontBlockBtn.disabled = false;
+      dontBlockBtn.innerText = "Don't block";
+    }
+  };
+
+  // try to insert the buttons in common meta container
   const insertionPoint = tile.querySelector("#meta, #overlays, #details, #content");
   if (insertionPoint) {
-    insertionPoint.appendChild(btn);
+    insertionPoint.appendChild(blockBtn);
+    insertionPoint.appendChild(dontBlockBtn);
   } else {
     // fallback: append to tile
-    tile.appendChild(btn);
+    tile.appendChild(blockBtn);
+    tile.appendChild(dontBlockBtn);
   }
 
   // Mark as processed to avoid duplicate button attachment
@@ -463,20 +574,24 @@ function hideTileWithPlaceholder(tile, matchedId, matchedTitle, matchedChannel, 
   const placeholder = createPlaceholder(matchedTitle, matchedChannel, matchedId, matchedSim, blockReasons);
   const originalDisplay = tile.style.display;
   const originalChildren = Array.from(tile.childNodes).map(n => n.cloneNode(true));
+  
+  // Extract the ACTUAL video info from the tile BEFORE replacing with placeholder
+  const { titleText, channelText } = extractVideoInfoFromTile(tile);
+  
   tile.innerHTML = "";
   tile.appendChild(placeholder);
 
   const unblockBtn = placeholder.querySelector(".ai-unblock-btn");
-  const negativeBtn = placeholder.querySelector(".ai-negative-btn");
 
   unblockBtn.addEventListener("click", () => {
-    // log for diagnostics
-    console.log("AI Blocker: 'Show this' clicked for", matchedTitle, "—", matchedChannel);
+    console.log("=== SHOW THIS CLICKED ===");
+    console.log("Video info extracted BEFORE placeholder:", titleText, "—", channelText);
+    console.log("Matched info from placeholder:", matchedTitle, "—", matchedChannel);
 
-    // temporarily prevent this exact tile from being immediately re-blocked
-    const key = getCacheKey(`${matchedTitle} — ${matchedChannel}`);
-    recentlyUnblocked.add(key);
-    setTimeout(() => recentlyUnblocked.delete(key), 60_000); // 60s grace
+    // Add to permanently allowed list (using the extracted title/channel)
+    addAllowedItem(titleText, channelText);
+    
+    console.log("Current allowed items after adding:", allowedItems);
 
     // restore original content
     tile.innerHTML = "";
@@ -487,40 +602,9 @@ function hideTileWithPlaceholder(tile, matchedId, matchedTitle, matchedChannel, 
     tile.removeAttribute("data-ytd-ai-processed");
 
     // ensure UI buttons are re-attached for restored content
-    try { attachButtonsToTile(tile); } catch (err) { /* ignore */ }
-
-    // schedule a delayed re-scan for diagnostics and to let other logic settle
-    setTimeout(() => {
-      try {
-        console.log("AI Blocker: re-scanning tile after show-this");
-        scanAndMaybeHideTile(tile);
-      } catch (e) { /* ignore */ }
-    }, 800);
-  });
-
-  negativeBtn.addEventListener("click", async () => {
-    // add the matched blocked example as a negative to prevent similar blocking
-    try {
-      // matchedId corresponds to blockedItems entry. If not found, create negative from current tile
-      let matched = blockedItems.find(x => x.id === matchedId);
-      if (matched) {
-        addNegativeItem(matched.title, matched.channel, Float32Array.from(matched.embedding));
-      } else {
-        const { titleText, channelText } = extractVideoInfoFromTile(tile);
-        const emb = await embed(`${titleText} — ${channelText}`);
-        addNegativeItem(titleText, channelText, emb);
-      }
-      alert("Marked as not similar — the filter will avoid blocking similar items.");
-      // remove placeholder and restore tile
-      tile.innerHTML = "";
-      for (const n of originalChildren) tile.appendChild(n);
-      tile.style.display = originalDisplay;
-
-      // clear the processed flag so the tile can be re-processed
-      tile.removeAttribute("data-ytd-ai-processed");
-    } catch (err) {
-      console.error("Failed to add negative:", err);
-    }
+    try { attachButtonsToTile(tile); } catch (err) { console.error("Button reattach error:", err); }
+    
+    console.log("=== SHOW THIS COMPLETE ===");
   });
 
   // hide tile visually (already replaced by placeholder)
@@ -530,30 +614,22 @@ function hideTileWithPlaceholder(tile, matchedId, matchedTitle, matchedChannel, 
 async function scanAndMaybeHideTile(tile) {
   try {
     const { titleText, channelText } = extractVideoInfoFromTile(tile);
-    const key = getCacheKey(`${titleText} — ${channelText}`);
     
-    // skip tiles the user just unblocked to avoid immediate re-blocking
-    if (recentlyUnblocked.has(key)) {
-      console.log("Skipping recently unblocked tile:", titleText);
-      return;
-    }
-
     // skip tiles that already have a placeholder (already processed and blocked)
     if (tile.querySelector(".ytd-ai-blocker-placeholder")) {
       return;
     }
 
-    // quick exact-match check (require same title AND same channel)
-    const matched = blockedItems.find(b => b.title === titleText && b.channel === channelText);
-    if (matched) {
-      hideTileWithPlaceholder(tile, matched.id, matched.title, matched.channel, 1.0);
-      return;
-    }
-
-    // Check similarity-based blocking
+    // ALWAYS go through shouldBlockText - it checks allowed list first
     const res = await shouldBlockText(titleText, channelText);
     if (res.block) {
-      hideTileWithPlaceholder(tile, res.matched.id, res.matched.title, res.matched.channel, res.sim, res.reasons);
+      // Find the matched item for display purposes
+      const matched = blockedItems.find(b => b.title === titleText && b.channel === channelText);
+      if (matched) {
+        hideTileWithPlaceholder(tile, matched.id, matched.title, matched.channel, 1.0, []);
+      } else {
+        hideTileWithPlaceholder(tile, res.matched?.id || "unknown", res.matched?.title || titleText, res.matched?.channel || channelText, res.sim, res.reasons);
+      }
     }
   } catch (err) {
     console.error("scanAndMaybeHideTile error:", err);
@@ -589,6 +665,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
       for (const k of Object.keys(cache)) runtimeCache.set(k, Float32Array.from(cache[k]));
     }
     if (changes[NEGATIVE_KEY]) negativeItems = changes[NEGATIVE_KEY].newValue || [];
+    if (changes[ALLOWED_KEY]) allowedItems = changes[ALLOWED_KEY].newValue || [];
     if (changes[THRESHOLD_KEY]) {
       const oldThreshold = threshold;
       threshold = changes[THRESHOLD_KEY].newValue || DEFAULT_THRESHOLD;

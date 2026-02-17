@@ -80,7 +80,7 @@ Traditional filters use simple keyword matching (e.g., block "politics"). This e
 
 1. **Clone the repository**
 ```bash
-git clone https://github.com/yourusername/youtube-ai-blocker.git
+git clone https://github.com/Mikolaj-Janowski/youtube-ai-blocker.git
 cd youtube-ai-blocker
 ```
 
