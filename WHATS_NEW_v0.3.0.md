@@ -1,6 +1,69 @@
-# What's New in Version 0.3.0
+# What's New — Version History
 
-## Hybrid Mode: AI Classifier + Similarity Matching
+---
+
+## Version 0.3.7 — Quantitative Metrics Dashboard
+
+Your YouTube AI Blocker can now **measure how well it's performing** and show you the numbers over time!
+
+### New Features
+
+#### 1. **Event Tracking Engine**
+The content script now silently logs four types of events:
+- `auto_blocked` — every time AI hides a video
+- `false_positive` — you clicked "Show this" on a video the AI hid
+- `false_negative` — you manually blocked content the AI missed (similarity ≥ 40%)
+- `manual_blocked` — every time you clicked "Block" yourself
+
+#### 2. **Precision / Recall / F1 Score**
+- **Precision**: TP / (TP + FP) — how accurate the automatic blocks are
+- **Recall**: TP / (TP + FN) — how complete the filtering is
+- **F1**: harmonic mean of Precision and Recall — overall quality score
+- All calculated live from logged events
+
+#### 3. **Longitudinal Performance Tracking**
+- A snapshot of P/R/F1 and the current threshold is saved every 10 auto-blocks
+- Up to 100 snapshots are retained in storage
+- The dashboard compares your **earliest snapshots vs. most recent** to show improvement
+
+#### 4. **Metrics Dashboard Tab**
+Opened via the "View Metrics Dashboard" button in the popup:
+- **Overview cards**: Auto-Blocked total, True Positives, False Positives, False Negatives
+- **Animated progress bars**: Precision, Recall, F1 Score
+- **SVG line chart**: P/R/F1 over time (longitudinal view)
+- **Early vs Recent F1 comparison** with improvement/decline indicator
+- **Snapshot history table**: All snapshots with timestamps, threshold, and colour-coded badges
+- **Export to CSV** — download full snapshot history for external analysis
+- **Reset Metrics** — clear all counters and history
+- **Auto-refreshes** in real-time when new data arrives
+
+---
+
+## Version 0.3.6 — Automatic Threshold Adaptation
+
+The similarity threshold now **adjusts itself** based on your corrections!
+
+### New Features
+
+#### 1. **Automatic FP/FN Detection**
+- **False positive detected**: you click "Show this" on a video the AI automatically blocked → threshold increases by 0.02 (less aggressive)
+- **False negative detected**: you manually click "Block" on a video that's at least 40% similar to existing blocked content → threshold decreases by 0.02 (more aggressive)
+- Threshold stays clamped between **0.30** and **0.95**
+
+#### 2. **Popup Toggle Switch**
+- New **"Adaptive Threshold"** section in the popup with an iOS-style toggle switch
+- Status display shows: "Off", "Active — waiting for data", or "Active — adapted N times"
+- The threshold slider updates automatically whenever the adaptation fires
+
+#### 3. **Smart Adaptation Rules**
+- Only adapts on *genuine* corrections, not noise
+- FN threshold: similarity must be ≥ 40% to existing blocked items (so irrelevant manual blocks don't lower the threshold)
+- FP threshold: only adapts when the blocked video was hidden by the AI (not a manual block)
+- Works alongside the logistic regression classifier seamlessly
+
+---
+
+## Version 0.3.0–0.3.5 — Hybrid Mode: AI Classifier + Similarity Matching
 
 Your YouTube AI Blocker now features **dual-method filtering** that combines the best of both approaches!
 
@@ -129,27 +192,23 @@ AND NOT (
 
 ---
 
-## New Files
+## New Files (cumulative through v0.3.7)
 
-1. **`src/classifier.js`** (320 lines)
-   - Complete classifier implementation
+1. **`src/classifier.js`**
+   - Complete logistic regression classifier
    - Training, prediction, serialization
-   - Utility functions
+   - Dataset balancing utilities
 
-2. **`CLASSIFIER_DESIGN.md`**
-   - Technical design document
-   - Architecture and algorithms
-   - Research context
+2. **`src/metrics.html`**
+   - Metrics dashboard page
+   - Overview cards, progress bars, SVG chart
+   - Snapshot history table, CSV export, reset button
 
-3. **`CLASSIFIER_TESTING.md`**
-   - Comprehensive testing guide
-   - 7 test scenarios
-   - Debugging tips
-
-4. **`CLASSIFIER_IMPLEMENTATION_SUMMARY.md`**
-   - Complete feature summary
-   - Performance analysis
-   - Future roadmap
+3. **`src/metrics.js`**
+   - Dashboard logic
+   - Calculates and renders P/R/F1 from raw events
+   - Longitudinal chart using inline SVG
+   - Auto-refreshes via `chrome.storage.onChanged`
 
 ---
 
@@ -232,17 +291,27 @@ AND NOT (
 
 ## What's Next?
 
+### Version 0.3.6 — Automatic Threshold Adaptation ✅ DONE
+- [x] FP/FN detection from user corrections
+- [x] ±0.02 threshold step, range 0.30–0.95
+- [x] Toggle switch in popup with live status
+
+### Version 0.3.7 — Quantitative Metrics Dashboard ✅ DONE
+- [x] Event-driven metrics logging (TP, FP, FN, manual)
+- [x] Precision / Recall / F1 calculations
+- [x] Snapshot history for longitudinal analysis
+- [x] Full-page dashboard with chart and CSV export
+
 ### Version 0.4.0 (Planned)
-- [ ] Metrics tracking system
-- [ ] Decision logging for analysis
-- [ ] Performance dashboard
-- [ ] Export/import functionality
+- [ ] Qualitative decision history log (per-video audit trail)
+- [ ] Import/export full extension data (blocked list, settings, metrics)
+- [ ] User study tooling (anonymous session export)
 
 ### Future Research Features
-- [ ] Auto-threshold adaptation
 - [ ] Multi-class classification (topic categories)
 - [ ] Confidence calibration
 - [ ] Ensemble methods
+- [ ] Multi-platform support (Firefox)
 
 ---
 
@@ -255,7 +324,8 @@ All new documentation:
 - `WHATS_NEW_v0.3.0.md` - This file
 
 Updated documentation:
-- `manifest.json` - Version 0.3.0
+- `manifest.json` - Version 0.3.7
+- `README.md` - Comprehensive user and academic guide
 - Code comments throughout
 
 ---
@@ -325,15 +395,15 @@ Suitable for:
 
 ---
 
-**Version 0.3.0-0.3.5 - Hybrid Mode + Professional UI - Ready to Deploy!**
+**Version 0.3.0–0.3.7 — Hybrid Mode + Professional UI + Adaptive Threshold + Metrics Dashboard — Ready for User Studies!**
 
 *Built for better content control and digital autonomy*
 
 ---
 
-**Questions?** Check `CLASSIFIER_TESTING.md` for troubleshooting.
+**Questions?** Console (F12) shows detailed debug logs.
 
-**Issues?** Console (F12) shows detailed debug logs.
+**Issues?** Open the Metrics Dashboard to see what the extension has been logging.
 
 **Improvements?** Contributions welcome after research phase.
 
