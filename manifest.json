@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "YouTube AI Blocker (Upgraded)",
-  "version": "0.3.5",
-  "description": "AI-powered YouTube content filter with hybrid ML (similarity + classifier) for adaptive learning.",
+  "version": "0.3.6",
+  "description": "AI-powered YouTube content filter with hybrid ML (similarity + classifier) and automatic threshold adaptation.",
   "permissions": ["storage", "scripting", "activeTab"],
   "host_permissions": [
     "https://www.youtube.com/*",

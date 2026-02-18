@@ -20,11 +20,19 @@ const MODE_KEY = "ytd_ai_mode_v2";             // 'local' or 'remote'
 const BACKEND_KEY = "ytd_ai_backend_v2";
 const CLASSIFIER_KEY = "ytd_ai_classifier_v2"; // trained classifier model
 const CLASSIFIER_ENABLED_KEY = "ytd_ai_classifier_enabled_v2"; // on/off toggle
+const AUTO_THRESHOLD_KEY = "ytd_ai_auto_threshold_v2"; // automatic threshold adaptation toggle
+const ADAPT_STATS_KEY = "ytd_ai_adapt_stats_v2";       // adaptation statistics
 
 const DEFAULT_THRESHOLD = 0.7;
 const EMBED_BATCH_SIZE = 8;  // batch size for embedding in local mode
 const MIN_POSITIVES_FOR_TRAINING = 10; // minimum blocked items to train classifier
 const MIN_NEGATIVES_FOR_TRAINING = 20;  // minimum negative examples to train classifier
+
+// Automatic threshold adaptation constants
+const ADAPT_STEP = 0.02;       // Amount to change threshold per adaptation event
+const ADAPT_FLOOR = 0.30;      // Minimum possible threshold
+const ADAPT_CEILING = 0.95;    // Maximum possible threshold
+const ADAPT_FN_MIN_SIM = 0.40; // Min similarity to existing blocked items to trigger FN detection
 
 /* ---------------- Globals ---------------- */
 let extractor = null; // Not used - delegated to background worker
@@ -38,6 +46,8 @@ let mode = "local";
 let backendUrl = "";
 let classifier = new LogisticRegressionClassifier(); // logistic regression classifier
 let classifierEnabled = false; // whether to use classifier in predictions
+let autoThresholdEnabled = false; // whether to auto-adapt threshold from feedback
+let adaptStats = { up: 0, down: 0 }; // track how many times threshold was adapted
 
 let embedQueue = []; // queue of {text, resolve}
 
@@ -68,7 +78,7 @@ function saveToStorage(keys) {
 async function loadState() {
   const data = await new Promise(res => chrome.storage.local.get([
     STORAGE_KEY, CACHE_KEY, NEGATIVE_KEY, ALLOWED_KEY, THRESHOLD_KEY, MODE_KEY, BACKEND_KEY,
-    CLASSIFIER_KEY, CLASSIFIER_ENABLED_KEY
+    CLASSIFIER_KEY, CLASSIFIER_ENABLED_KEY, AUTO_THRESHOLD_KEY, ADAPT_STATS_KEY
   ], res));
   
   blockedItems = data[STORAGE_KEY] || [];
@@ -79,6 +89,8 @@ async function loadState() {
   mode = data[MODE_KEY] || "local";
   backendUrl = data[BACKEND_KEY] || "";
   classifierEnabled = data[CLASSIFIER_ENABLED_KEY] || false;
+  autoThresholdEnabled = data[AUTO_THRESHOLD_KEY] || false;
+  adaptStats = data[ADAPT_STATS_KEY] || { up: 0, down: 0 };
   
   // Load classifier if it exists
   if (data[CLASSIFIER_KEY]) {
@@ -307,6 +319,32 @@ async function maybeTrainClassifier() {
   } catch (err) {
     console.error("Classifier training failed:", err);
     return null;
+  }
+}
+
+/* ---------------- Automatic Threshold Adaptation ---------------- */
+function adaptThreshold(direction) {
+  if (!autoThresholdEnabled) return;
+
+  const oldThreshold = threshold;
+  let newThreshold;
+
+  if (direction === 'up') {
+    newThreshold = Math.min(ADAPT_CEILING, Math.round((threshold + ADAPT_STEP) * 100) / 100);
+    adaptStats.up = (adaptStats.up || 0) + 1;
+  } else {
+    newThreshold = Math.max(ADAPT_FLOOR, Math.round((threshold - ADAPT_STEP) * 100) / 100);
+    adaptStats.down = (adaptStats.down || 0) + 1;
+  }
+
+  if (newThreshold !== oldThreshold) {
+    threshold = newThreshold;
+    const arrow = direction === 'up' ? '↑' : '↓';
+    console.log(`[Auto-Threshold] ${arrow} Adapted: ${oldThreshold.toFixed(2)} → ${threshold.toFixed(2)} (↑${adaptStats.up} ↓${adaptStats.down})`);
+    saveToStorage({
+      [THRESHOLD_KEY]: threshold,
+      [ADAPT_STATS_KEY]: { ...adaptStats }
+    });
   }
 }
 
@@ -619,9 +657,24 @@ function attachButtonsToTile(tile) {
       
       const textForEmbed = `${titleText} — ${channelText}`;
       const emb = await embed(textForEmbed);
+      
+      // Auto-threshold: detect false negatives (user blocking content similar to existing but not auto-caught)
+      if (autoThresholdEnabled && blockedItems.length > 0) {
+        let maxSim = 0;
+        for (const b of blockedItems) {
+          const sim = cosineSimilarity(emb, Float32Array.from(b.embedding));
+          if (sim > maxSim) maxSim = sim;
+        }
+        // If somewhat similar to existing blocked items but wasn't auto-blocked → threshold too high
+        if (maxSim >= ADAPT_FN_MIN_SIM && maxSim < threshold) {
+          console.log(`[Auto-Threshold] FN detected: max sim ${maxSim.toFixed(2)} < threshold ${threshold.toFixed(2)} → lowering threshold`);
+          adaptThreshold('down');
+        }
+      }
+      
       const id = addBlockedItem(titleText, channelText, emb);
-      // hide tile
-      hideTileWithPlaceholder(tile, id, titleText, channelText, 1.0 /* local placeholder sim */, []);
+      // hide tile (wasAutoBlocked = false since user manually blocked)
+      hideTileWithPlaceholder(tile, id, titleText, channelText, 1.0 /* local placeholder sim */, [], false);
       console.log("=== BLOCK COMPLETE ===");
     } catch (err) {
       console.error("Block failed", err);
@@ -670,7 +723,7 @@ function attachButtonsToTile(tile) {
   tile.setAttribute("data-ytd-ai-processed", "true");
 }
 
-function hideTileWithPlaceholder(tile, matchedId, matchedTitle, matchedChannel, matchedSim, blockReasons = []) {
+function hideTileWithPlaceholder(tile, matchedId, matchedTitle, matchedChannel, matchedSim, blockReasons = [], wasAutoBlocked = false) {
   // replace tile's content with placeholder but keep a reference to restore
   const placeholder = createPlaceholder(matchedTitle, matchedChannel, matchedId, matchedSim, blockReasons);
   const originalDisplay = tile.style.display;
@@ -688,6 +741,12 @@ function hideTileWithPlaceholder(tile, matchedId, matchedTitle, matchedChannel, 
     console.log("=== SHOW THIS CLICKED ===");
     console.log("Video info extracted BEFORE placeholder:", titleText, "—", channelText);
     console.log("Matched info from placeholder:", matchedTitle, "—", matchedChannel);
+
+    // Auto-threshold: "Show this" on an auto-blocked video is a false positive → raise threshold
+    if (wasAutoBlocked) {
+      console.log("[Auto-Threshold] FP detected: user clicked 'Show this' on auto-blocked video → raising threshold");
+      adaptThreshold('up');
+    }
 
     // Add to permanently allowed list (using the extracted title/channel)
     addAllowedItem(titleText, channelText);
@@ -727,9 +786,9 @@ async function scanAndMaybeHideTile(tile) {
       // Find the matched item for display purposes
       const matched = blockedItems.find(b => b.title === titleText && b.channel === channelText);
       if (matched) {
-        hideTileWithPlaceholder(tile, matched.id, matched.title, matched.channel, 1.0, []);
+        hideTileWithPlaceholder(tile, matched.id, matched.title, matched.channel, 1.0, [], true);
       } else {
-        hideTileWithPlaceholder(tile, res.matched?.id || "unknown", res.matched?.title || titleText, res.matched?.channel || channelText, res.sim, res.reasons);
+        hideTileWithPlaceholder(tile, res.matched?.id || "unknown", res.matched?.title || titleText, res.matched?.channel || channelText, res.sim, res.reasons, true);
       }
     }
   } catch (err) {
@@ -788,6 +847,13 @@ chrome.storage.onChanged.addListener((changes, area) => {
     if (changes[CLASSIFIER_KEY]) {
       classifier.fromJSON(changes[CLASSIFIER_KEY].newValue);
       console.log("[Content Script] Classifier updated:", classifier.getStats());
+    }
+    if (changes[AUTO_THRESHOLD_KEY]) {
+      autoThresholdEnabled = changes[AUTO_THRESHOLD_KEY].newValue || false;
+      console.log("[Content Script] Auto-threshold enabled:", autoThresholdEnabled);
+    }
+    if (changes[ADAPT_STATS_KEY]) {
+      adaptStats = changes[ADAPT_STATS_KEY].newValue || { up: 0, down: 0 };
     }
   }
 });

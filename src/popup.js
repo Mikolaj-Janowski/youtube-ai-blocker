@@ -8,6 +8,8 @@ const MODE_KEY = "ytd_ai_mode_v2";
 const BACKEND_KEY = "ytd_ai_backend_v2";
 const CLASSIFIER_KEY = "ytd_ai_classifier_v2";
 const CLASSIFIER_ENABLED_KEY = "ytd_ai_classifier_enabled_v2";
+const AUTO_THRESHOLD_KEY = "ytd_ai_auto_threshold_v2";
+const ADAPT_STATS_KEY = "ytd_ai_adapt_stats_v2";
 const DEFAULT_THRESHOLD = 0.7;
 const DEFAULT_MODE = "local";
 const MIN_POSITIVES = 10;
@@ -29,11 +31,13 @@ document.addEventListener("DOMContentLoaded", async () => {
   const classifierEnabledCheckbox = document.getElementById("classifierEnabled");
   const classifierStatusDiv = document.getElementById("classifierStatus");
   const retrainClassifierBtn = document.getElementById("retrainClassifier");
+  const autoThresholdEnabledCheckbox = document.getElementById("autoThresholdEnabled");
+  const adaptiveStatusDiv = document.getElementById("adaptiveStatus");
 
   // load settings
   chrome.storage.local.get([
     THRESHOLD_KEY, STORAGE_KEY, NEGATIVE_KEY, ALLOWED_KEY, MODE_KEY, BACKEND_KEY, 
-    CLASSIFIER_ENABLED_KEY, CLASSIFIER_KEY
+    CLASSIFIER_ENABLED_KEY, CLASSIFIER_KEY, AUTO_THRESHOLD_KEY, ADAPT_STATS_KEY
   ], (data) => {
     const th = data[THRESHOLD_KEY] || DEFAULT_THRESHOLD;
     console.log("Loading threshold from storage:", th);
@@ -43,10 +47,12 @@ document.addEventListener("DOMContentLoaded", async () => {
     modeSelect.value = data[MODE_KEY] || DEFAULT_MODE;
     backendUrlInput.value = data[BACKEND_KEY] || "";
     classifierEnabledCheckbox.checked = data[CLASSIFIER_ENABLED_KEY] || false;
+    autoThresholdEnabledCheckbox.checked = data[AUTO_THRESHOLD_KEY] || false;
     renderBlocked(data[STORAGE_KEY] || []);
     renderNegatives(data[NEGATIVE_KEY] || []);
     renderAllowed(data[ALLOWED_KEY] || []);
     updateClassifierStatus(data[STORAGE_KEY] || [], data[NEGATIVE_KEY] || [], data[CLASSIFIER_KEY]);
+    updateAdaptiveStatus(data[ADAPT_STATS_KEY] || { up: 0, down: 0 });
     backendRow.style.display = (modeSelect.value === "remote") ? "block" : "none";
   });
 
@@ -117,6 +123,17 @@ document.addEventListener("DOMContentLoaded", async () => {
     });
   });
 
+  autoThresholdEnabledCheckbox.addEventListener("change", () => {
+    const enabled = autoThresholdEnabledCheckbox.checked;
+    chrome.storage.local.set({ [AUTO_THRESHOLD_KEY]: enabled }, () => {
+      console.log("Auto-threshold enabled:", enabled);
+      // Reload adaptive status
+      chrome.storage.local.get([ADAPT_STATS_KEY], (data) => {
+        updateAdaptiveStatus(data[ADAPT_STATS_KEY] || { up: 0, down: 0 });
+      });
+    });
+  });
+
   classifierEnabledCheckbox.addEventListener("change", () => {
     const enabled = classifierEnabledCheckbox.checked;
     chrome.storage.local.set({ [CLASSIFIER_ENABLED_KEY]: enabled }, () => {
@@ -174,6 +191,18 @@ document.addEventListener("DOMContentLoaded", async () => {
         updateClassifierStatus(data[STORAGE_KEY] || [], data[NEGATIVE_KEY] || [], data[CLASSIFIER_KEY]);
       });
     }
+    // Sync threshold slider if auto-adaptation changed it from the content script
+    if (changes[THRESHOLD_KEY]) {
+      const newVal = changes[THRESHOLD_KEY].newValue;
+      if (newVal !== undefined) {
+        thresholdInput.value = newVal;
+        thVal.innerText = parseFloat(newVal).toFixed(2);
+      }
+    }
+    // Update adaptive status when stats change
+    if (changes[ADAPT_STATS_KEY]) {
+      updateAdaptiveStatus(changes[ADAPT_STATS_KEY].newValue || { up: 0, down: 0 });
+    }
   });
 
   function updateClassifierStatus(blockedItems, negativeItems, classifierData) {
@@ -202,6 +231,42 @@ document.addEventListener("DOMContentLoaded", async () => {
         <div style="color: #999;">Not enough data</div>
         <div style="font-size: 11px; color: #666; margin-top: 2px;">
           Need ${needPos} more blocked, ${needNeg} more "not similar"
+        </div>
+      `;
+    }
+  }
+
+  function updateAdaptiveStatus(stats) {
+    const totalUp = stats.up || 0;
+    const totalDown = stats.down || 0;
+    const total = totalUp + totalDown;
+    const isEnabled = autoThresholdEnabledCheckbox.checked;
+
+    if (!isEnabled) {
+      adaptiveStatusDiv.innerHTML = `
+        <div style="font-size:12px;color:#6b7280;background:#f8f9ff;border:2px solid #e0e4ff;border-radius:8px;padding:12px;line-height:1.6;">
+          <div style="font-weight:600;color:#667eea;margin-bottom:6px;">How it works:</div>
+          <div>↑ <strong>Raises threshold</strong> when you click "Show this" on auto-blocked videos (false positive)</div>
+          <div>↓ <strong>Lowers threshold</strong> when you manually block similar-but-missed content (false negative)</div>
+          <div style="margin-top:6px;font-style:italic;color:#9ca3af;">Step size: ±0.02 per event &nbsp;|&nbsp; Range: 0.30 – 0.95</div>
+        </div>
+      `;
+    } else if (total === 0) {
+      adaptiveStatusDiv.innerHTML = `
+        <div style="font-size:12px;color:#6b7280;background:#f0fdf4;border:2px solid #bbf7d0;border-radius:8px;padding:12px;line-height:1.6;">
+          <div style="font-weight:600;color:#16a34a;margin-bottom:4px;">✓ Active — Waiting for feedback</div>
+          <div>Browse YouTube and interact with blocked/unblocked videos to start adapting.</div>
+        </div>
+      `;
+    } else {
+      adaptiveStatusDiv.innerHTML = `
+        <div style="font-size:12px;color:#374151;background:#f0fdf4;border:2px solid #bbf7d0;border-radius:8px;padding:12px;line-height:1.8;">
+          <div style="font-weight:600;color:#16a34a;margin-bottom:6px;">✓ Active — Adapted ${total} time${total !== 1 ? 's' : ''}</div>
+          <div style="display:flex;gap:16px;">
+            <span>↑ Raised: <strong>${totalUp}×</strong></span>
+            <span>↓ Lowered: <strong>${totalDown}×</strong></span>
+          </div>
+          <div style="margin-top:6px;font-size:11px;color:#6b7280;">Current threshold shown in the slider above</div>
         </div>
       `;
     }

@@ -575,6 +575,77 @@ label[style*="flex"] {
   background: linear-gradient(135deg, #5568d3 0%, #6a3f8f 100%);
 }
 
+/* Toggle switch */
+.toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 50px;
+  height: 28px;
+  flex-shrink: 0;
+  margin-bottom: 0;
+}
+
+.toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+  margin: 0;
+}
+
+.toggle-slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: #d1d5db;
+  transition: 0.3s ease;
+  border-radius: 28px;
+  box-shadow: inset 0 1px 3px rgba(0,0,0,0.15);
+}
+
+.toggle-slider::before {
+  position: absolute;
+  content: "";
+  height: 22px;
+  width: 22px;
+  left: 3px;
+  bottom: 3px;
+  background: white;
+  transition: 0.3s ease;
+  border-radius: 50%;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+}
+
+.toggle-switch input:checked + .toggle-slider {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+}
+
+.toggle-switch input:checked + .toggle-slider::before {
+  transform: translateX(22px);
+}
+
+.toggle-switch:hover .toggle-slider {
+  box-shadow: inset 0 1px 3px rgba(0,0,0,0.15), 0 0 0 3px rgba(102, 126, 234, 0.15);
+}
+
+/* Setting row layout */
+.setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.setting-info {
+  flex: 1;
+}
+
+.setting-info label {
+  margin-bottom: 0;
+}
+
 /* Backend row */
 #backendRow {
   margin-top: 12px;
