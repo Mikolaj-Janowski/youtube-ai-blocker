@@ -1,0 +1,526 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>YouTube AI Blocker — Metrics Dashboard</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: #f1f5f9;
+      color: #1e293b;
+      min-height: 100vh;
+    }
+
+    /* Header */
+    .header {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 24px 40px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+    }
+
+    .header-left h1 {
+      font-size: 22px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .header-left .subtitle {
+      font-size: 13px;
+      opacity: 0.8;
+      margin-top: 4px;
+    }
+
+    #lastUpdated {
+      font-size: 12px;
+      color: rgba(255,255,255,0.65);
+      margin-top: 6px;
+    }
+
+    .header-actions {
+      display: flex;
+      gap: 10px;
+    }
+
+    .btn {
+      padding: 10px 18px;
+      border: 2px solid rgba(255,255,255,0.5);
+      background: rgba(255,255,255,0.12);
+      color: white;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+      transition: all 0.2s ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-family: inherit;
+    }
+
+    .btn:hover {
+      background: rgba(255,255,255,0.25);
+      border-color: rgba(255,255,255,0.8);
+      transform: translateY(-1px);
+    }
+
+    .btn-danger {
+      border-color: rgba(239, 68, 68, 0.7);
+      background: rgba(239, 68, 68, 0.2);
+    }
+
+    .btn-danger:hover {
+      background: rgba(239, 68, 68, 0.4);
+      border-color: #ef4444;
+    }
+
+    /* Content layout */
+    .content {
+      max-width: 1040px;
+      margin: 32px auto;
+      padding: 0 24px;
+    }
+
+    /* Cards */
+    .section {
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+      margin-bottom: 24px;
+      overflow: hidden;
+    }
+
+    .section-header {
+      padding: 16px 24px;
+      border-bottom: 2px solid #f1f5f9;
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: #667eea;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: linear-gradient(to right, #fafbff, #ffffff);
+      position: relative;
+    }
+
+    .section-header::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 4px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    }
+
+    .section-body {
+      padding: 24px;
+    }
+
+    /* Stats grid */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+    }
+
+    .stat-card {
+      background: #f8f9ff;
+      border: 2px solid #e0e4ff;
+      border-radius: 10px;
+      padding: 20px;
+      text-align: center;
+      transition: all 0.2s ease;
+    }
+
+    .stat-card:hover {
+      box-shadow: 0 4px 12px rgba(102, 126, 234, 0.15);
+      border-color: #667eea;
+      transform: translateY(-2px);
+    }
+
+    .stat-number {
+      font-size: 44px;
+      font-weight: 800;
+      color: #667eea;
+      line-height: 1;
+    }
+
+    .stat-label {
+      font-size: 11px;
+      color: #6b7280;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-top: 8px;
+      line-height: 1.4;
+    }
+
+    .stat-card.green { border-color: #bbf7d0; background: #f0fdf4; }
+    .stat-card.green .stat-number { color: #16a34a; }
+    .stat-card.red   { border-color: #fecaca; background: #fef2f2; }
+    .stat-card.red   .stat-number { color: #dc2626; }
+    .stat-card.orange{ border-color: #fde68a; background: #fffbeb; }
+    .stat-card.orange .stat-number { color: #d97706; }
+
+    /* Metric bars */
+    .metric-row {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+
+    .metric-row:last-child { margin-bottom: 0; }
+
+    .metric-label {
+      font-size: 14px;
+      font-weight: 600;
+      color: #374151;
+      width: 90px;
+      flex-shrink: 0;
+    }
+
+    .metric-bar-wrap {
+      flex: 1;
+      background: #f1f5f9;
+      border-radius: 20px;
+      height: 22px;
+      overflow: hidden;
+    }
+
+    .metric-bar {
+      height: 100%;
+      border-radius: 20px;
+      transition: width 1s ease;
+      min-width: 4px;
+    }
+
+    .metric-value {
+      font-size: 22px;
+      font-weight: 800;
+      width: 70px;
+      text-align: right;
+      flex-shrink: 0;
+    }
+
+    .bar-precision { background: linear-gradient(90deg, #667eea 0%, #764ba2 100%); }
+    .val-precision  { color: #667eea; }
+    .bar-recall     { background: linear-gradient(90deg, #10b981 0%, #059669 100%); }
+    .val-recall     { color: #10b981; }
+    .bar-f1         { background: linear-gradient(90deg, #f59e0b 0%, #d97706 100%); }
+    .val-f1         { color: #d97706; }
+
+    /* Info boxes */
+    .info-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 14px;
+      margin-top: 20px;
+    }
+
+    .info-box {
+      background: #f8f9ff;
+      border: 2px solid #e0e4ff;
+      border-radius: 8px;
+      padding: 14px;
+      font-size: 12px;
+      line-height: 1.7;
+      color: #4b5563;
+    }
+
+    .info-box strong {
+      display: block;
+      font-size: 13px;
+      font-weight: 700;
+      color: #374151;
+      margin-bottom: 5px;
+    }
+
+    .info-box code {
+      background: #e0e4ff;
+      color: #667eea;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-family: monospace;
+    }
+
+    /* Chart */
+    .chart-container { width: 100%; overflow-x: auto; }
+    .chart-svg { width: 100%; min-width: 500px; }
+
+    .chart-legend {
+      display: flex;
+      gap: 24px;
+      justify-content: center;
+      margin-top: 14px;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      color: #6b7280;
+      font-weight: 500;
+    }
+
+    .legend-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+    }
+
+    /* Longitudinal comparison */
+    .comparison-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr 160px;
+      gap: 16px;
+      margin-top: 20px;
+    }
+
+    .comparison-card {
+      border-radius: 10px;
+      padding: 20px;
+      text-align: center;
+    }
+
+    .comparison-card .period-label {
+      font-size: 11px;
+      color: #9ca3af;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 8px;
+      font-weight: 600;
+    }
+
+    .comparison-card .period-value {
+      font-size: 32px;
+      font-weight: 800;
+      line-height: 1;
+    }
+
+    .comparison-card .period-sub {
+      font-size: 11px;
+      color: #6b7280;
+      margin-top: 6px;
+    }
+
+    /* History table */
+    .history-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    .history-table th {
+      background: #f8f9ff;
+      color: #667eea;
+      font-weight: 700;
+      padding: 12px 16px;
+      text-align: left;
+      border-bottom: 2px solid #e0e4ff;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      white-space: nowrap;
+    }
+
+    .history-table td {
+      padding: 10px 16px;
+      border-bottom: 1px solid #f1f5f9;
+      color: #374151;
+    }
+
+    .history-table tbody tr:hover td { background: #f8f9ff; }
+    .history-table tbody tr:last-child td { border-bottom: none; }
+
+    /* Badges */
+    .badge {
+      display: inline-block;
+      padding: 3px 9px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .badge-excellent { background: #dcfce7; color: #16a34a; }
+    .badge-good      { background: #e0e7ff; color: #4338ca; }
+    .badge-ok        { background: #fef3c7; color: #d97706; }
+    .badge-poor      { background: #fee2e2; color: #dc2626; }
+    .badge-na        { background: #f3f4f6; color: #9ca3af; }
+
+    /* No data */
+    .no-data {
+      text-align: center;
+      padding: 48px 24px;
+      color: #9ca3af;
+      font-size: 14px;
+    }
+
+    .no-data svg {
+      display: block;
+      margin: 0 auto 16px;
+      opacity: 0.4;
+    }
+
+    /* Tracking note */
+    .tracking-note {
+      background: #fffbeb;
+      border: 2px solid #fde68a;
+      border-radius: 8px;
+      padding: 14px 16px;
+      font-size: 12px;
+      color: #92400e;
+      line-height: 1.6;
+      margin-top: 20px;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <div class="header-left">
+      <h1>
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+        Metrics Dashboard
+      </h1>
+      <div class="subtitle">YouTube AI Blocker — Performance Analytics</div>
+      <div id="lastUpdated">Loading data...</div>
+    </div>
+    <div class="header-actions">
+      <button class="btn" id="refreshBtn">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+        Refresh
+      </button>
+      <button class="btn" id="exportBtn">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Export CSV
+      </button>
+      <button class="btn btn-danger" id="resetBtn">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+        Reset Metrics
+      </button>
+    </div>
+  </div>
+
+  <div class="content">
+
+    <!-- Overview -->
+    <div class="section">
+      <div class="section-header">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+        Overview
+      </div>
+      <div class="section-body">
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-number" id="statAutoBlocked">—</div>
+            <div class="stat-label">Total Auto-Blocked</div>
+          </div>
+          <div class="stat-card green">
+            <div class="stat-number" id="statTruePositives">—</div>
+            <div class="stat-label">True Positives (est.)</div>
+          </div>
+          <div class="stat-card red">
+            <div class="stat-number" id="statFalsePositives">—</div>
+            <div class="stat-label">False Positives</div>
+          </div>
+          <div class="stat-card orange">
+            <div class="stat-number" id="statFalseNegatives">—</div>
+            <div class="stat-label">False Negatives</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Current Performance Metrics -->
+    <div class="section">
+      <div class="section-header">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        Current Performance
+      </div>
+      <div class="section-body">
+        <div id="metricsContent">
+          <div class="no-data">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+            No blocking data yet. Start blocking videos on YouTube to see performance metrics.
+          </div>
+        </div>
+
+        <div class="info-grid">
+          <div class="info-box">
+            <strong>Precision</strong>
+            Of all auto-blocked videos, what fraction was a correct block?
+            <br><code>TP / (TP + FP)</code><br>
+            <em>Higher = fewer false alarms</em>
+          </div>
+          <div class="info-box">
+            <strong>Recall</strong>
+            Of all videos that should have been blocked, what fraction was caught?
+            <br><code>TP / (TP + FN)</code><br>
+            <em>Higher = fewer missed blocks</em>
+          </div>
+          <div class="info-box">
+            <strong>F1 Score</strong>
+            Harmonic mean of Precision and Recall — overall balance.
+            <br><code>2 × P × R / (P + R)</code><br>
+            <em>Higher = better overall filtering</em>
+          </div>
+        </div>
+
+        <div class="tracking-note">
+          ⚠️ <strong>Measurement methodology:</strong>
+          True Positives are estimated as (auto-blocked − false positives). 
+          <strong>False Positives</strong> are recorded when you click "Show this" on an auto-blocked video.
+          <strong>False Negatives</strong> are recorded when you manually block a video with ≥ 40% similarity to existing blocked items (content the filter should have caught automatically).
+        </div>
+      </div>
+    </div>
+
+    <!-- Performance Over Time (Chart) -->
+    <div class="section">
+      <div class="section-header">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+        Performance Over Time
+      </div>
+      <div class="section-body">
+        <div id="chartContainer">
+          <div class="no-data">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/></svg>
+            Not enough snapshots yet. A snapshot is taken every 10 auto-block events.
+          </div>
+        </div>
+        <div id="comparisonContainer"></div>
+      </div>
+    </div>
+
+    <!-- Snapshot History Table -->
+    <div class="section" id="historySection" style="display:none;">
+      <div class="section-header">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        Snapshot History
+        <span id="historyCount" style="font-size:11px;color:#9ca3af;margin-left:auto;font-weight:400;text-transform:none;letter-spacing:0;"></span>
+      </div>
+      <div class="section-body" style="padding:0;">
+        <div id="historyTable" style="overflow-x:auto;"></div>
+      </div>
+    </div>
+
+  </div>
+
+  <script src="metrics.js"></script>
+</body>
+</html>
+

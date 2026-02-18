@@ -2,7 +2,7 @@
 
 An AI-powered browser extension for intelligent, adaptive content filtering on YouTube. This extension learns from your preferences to automatically hide videos similar to content you've blocked, using state-of-the-art natural language processing.
 
-![Version](https://img.shields.io/badge/version-0.3.5-blue)
+![Version](https://img.shields.io/badge/version-0.3.7-blue)
 ![Manifest](https://img.shields.io/badge/manifest-v3-green)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
@@ -14,15 +14,17 @@ YouTube AI Blocker is an academic research project that demonstrates how AI can 
 
 ### Key Features
 
-- **Hybrid AI Filtering**: Combines similarity matching + ML classifier for better accuracy
+- **Hybrid AI Filtering**: Combines similarity matching + logistic regression classifier
 - **Privacy-First**: All processing happens locally in your browser
 - **Learns from You**: Adapts based on your blocking decisions and feedback
+- **Automatic Threshold Adaptation**: Sensitivity adjusts itself based on your corrections (FP/FN)
 - **Real-Time**: Automatically filters content as you browse
-- **Adjustable**: Fine-tune sensitivity with threshold slider
+- **Adjustable**: Fine-tune sensitivity with threshold slider (or let the extension adapt it)
 - **Permanent Allow List**: "Show this" button creates persistent exceptions
 - **Training Data**: "Don't Block" button teaches the classifier what to avoid
 - **Professional UI**: Icon-based design with tooltips and color-coded lists
 - **Transparent Decisions**: See which method blocked content and why
+- **Metrics Dashboard**: Precision, Recall, F1 score — longitudinal chart, CSV export
 - **Dual Mode**: Local ONNX inference or optional remote backend
 
 ---
@@ -66,6 +68,7 @@ As you browse, the extension:
 - **Classifier Training**: Logistic regression learns patterns across all examples (requires 10 blocked + 20 "don't block")
 - **Permanent Exceptions**: "Show this" creates lasting allow list entries
 - **Threshold Adjustment**: Real-time sensitivity control for both methods
+- **Automatic Adaptation**: Extension detects false positives ("Show this") and false negatives (missed blocks) and adjusts the threshold by ±0.02 automatically when the toggle is on
 
 ### Why This Matters
 
@@ -172,6 +175,22 @@ npm run build
 - Training takes 1-3 seconds
 - Status shows current data counts and training state
 
+#### Automatic Threshold Adaptation
+- Enable via the **"Adaptive Threshold"** toggle in the popup
+- When on, the extension raises the threshold when it over-blocks (+0.02 per false positive) and lowers it when it under-blocks (−0.02 per false negative)
+- The popup slider updates in real-time to reflect the adapted value
+- Status shows "Active — adapted N times" so you always know what's happening
+
+#### Metrics Dashboard
+- Click **"View Metrics Dashboard"** in the popup to open the analytics page
+- Displays: Auto-Blocked total, True Positives, False Positives, False Negatives
+- Precision / Recall / F1 Score with animated progress bars
+- Line chart showing metric trends over time (longitudinal view)
+- Compares early-session vs. recent performance to show learning improvement
+- Full snapshot history table with timestamps
+- **Export to CSV** for academic analysis
+- Auto-refreshes whenever new data arrives
+
 #### Cache Management
 - Embeddings are cached to improve performance
 - Clear cache if you want to reset all learned patterns
@@ -219,17 +238,23 @@ npm run build
 ┌─────────────────────────────────────────────────────────────┐
 │                     Popup UI (popup.html/js)                 │
 │  • Threshold slider control                                  │
-│  • Blocked items list management                             │
-│  • Mode selection (local/remote)                             │
-│  • Cache management                                          │
+│  • Blocked / Don't Block / Allowed items lists               │
+│  • Classifier toggle and retrain button                      │
+│  • Adaptive threshold toggle with status display             │
+│  • Metrics dashboard launch button                           │
+│  • Mode selection (local/remote) + cache management          │
 └─────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────┐
 │                 Chrome Local Storage                         │
 │  • Blocked items (positive examples)                         │
-│  • Negative examples                                         │
+│  • Negative examples ("Don't Block")                         │
+│  • Allowed items ("Show this" permanent list)                │
 │  • Embedding cache                                           │
 │  • User settings (threshold, mode, backend URL)              │
+│  • Classifier model weights                                  │
+│  • Adaptive threshold state and stats                        │
+│  • Metrics events and snapshot history                       │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -336,6 +361,9 @@ All data stored in Chrome Local Storage:
 | `ytd_ai_threshold_v2` | Similarity & classifier threshold | `0.7` |
 | `ytd_ai_mode_v2` | Inference mode | `"local"` |
 | `ytd_ai_backend_v2` | Remote backend URL | `""` |
+| `ytd_ai_auto_threshold_v2` | Adaptive threshold on/off state | `false` |
+| `ytd_ai_adapt_stats_v2` | Adaptation counters `{up, down}` | `{up:0,down:0}` |
+| `ytd_ai_metrics_v2` | Metrics events + snapshot history | `{…}` |
 
 ### Threshold Guidelines
 
@@ -374,25 +402,29 @@ If using remote mode, your backend must implement:
 ```
 youtube-ai-blocker/
 ├── src/
-│   ├── content_script.js    # Main filtering logic
+│   ├── content_script.js    # Main filtering + metrics + auto-threshold logic
 │   ├── classifier.js        # Logistic regression classifier
 │   ├── background.js        # Service worker
 │   ├── offscreen.js         # ONNX model inference
 │   ├── offscreen.html       # Offscreen document
 │   ├── popup.html           # Extension UI (600px wide)
-│   ├── popup.js             # Popup logic
+│   ├── popup.js             # Popup logic (incl. adaptive threshold toggle)
+│   ├── metrics.html         # Metrics dashboard page
+│   ├── metrics.js           # Dashboard logic (P/R/F1, chart, CSV export)
 │   ├── styles.css           # Professional UI styles
 │   └── models/
 │       └── all-minilm-l6-v2/
 │           ├── config.json
 │           ├── model.onnx
 │           └── tokenizer.json
-├── manifest.json            # Extension manifest
-├── package.json             # Dependencies
+├── dist/                    # Built extension (load this in Chrome)
+├── manifest.json            # Extension manifest (v0.3.7)
+├── package.json             # Build scripts
 ├── download-model.js        # Model download script
 ├── requirements.txt         # Python deps (optional backend)
 ├── PROJECT_CHECKLIST.md     # Development status
-└── README.md               # This file
+├── WHATS_NEW_v0.3.0.md      # Feature changelog
+└── README.md                # This file
 ```
 
 ### Building
@@ -463,12 +495,14 @@ This project is part of academic research into **user-in-the-loop machine learni
 ### Novel Contributions
 
 1. **Semantic Understanding**: Beyond keywords to meaning-based filtering
-2. **Hybrid Filtering**: Combines similarity matching + ML classifier
+2. **Hybrid Filtering**: Combines similarity matching + logistic regression classifier
 3. **Local AI Inference**: Privacy-preserving on-device execution (both embedding and classifier)
 4. **Adaptive Learning**: System improves from positive and negative feedback
-5. **Real-Time Operation**: Efficient enough for live browsing
-6. **User Control**: Transparent, reversible, adjustable decisions with permanent allow list
-7. **Professional UX**: Icon-based UI with color-coded lists and tooltips
+5. **Automatic Threshold Adaptation**: FP/FN-driven ±0.02 threshold adjustment — demonstrates true closed-loop learning
+6. **Real-Time Operation**: Efficient enough for live browsing
+7. **User Control**: Transparent, reversible, adjustable decisions with permanent allow list
+8. **Quantitative Self-Evaluation**: Built-in P/R/F1 tracking and longitudinal dashboard; supports user studies out-of-the-box
+9. **Professional UX**: Icon-based UI with color-coded lists and tooltips
 
 ### Research Questions
 
@@ -479,21 +513,21 @@ This project is part of academic research into **user-in-the-loop machine learni
 
 ### Evaluation Methodology
 
-*Note: Quantitative evaluation system is planned but not yet implemented.*
+**Implemented Metrics (v0.3.7):**
+- Precision: TP / (TP + FP) — Accuracy of automatic blocking ✅
+- Recall: TP / (TP + FN) — Completeness of filtering ✅
+- F1 Score: Harmonic mean of precision and recall ✅
+- Longitudinal Analysis: Snapshot-based performance tracking over time ✅
+- CSV Export: Raw snapshot data downloadable for external statistical analysis ✅
 
-**Planned Metrics:**
-- Precision: TP / (TP + FP) - Accuracy of automatic blocking
-- Recall: TP / (TP + FN) - Completeness of filtering
-- F1 Score: Harmonic mean of precision and recall
-- User Satisfaction: Qualitative surveys and interviews
-- Longitudinal Analysis: Performance over weeks of use
+The **Metrics Dashboard** (popup → "View Metrics Dashboard") provides all quantitative data needed for academic evaluation. Each participant in a user study can export their own CSV at the end of the study period.
 
 **Planned User Study:**
 - 10-20 participants
 - 2-4 weeks of natural YouTube usage
-- Pre/post surveys
-- Interview sessions
-- Usage logs and metrics
+- Pre/post surveys + interview sessions
+- Collect per-participant CSV exports from the built-in metrics dashboard
+- Aggregate results for the paper
 
 ---
 
@@ -557,13 +591,13 @@ This is an academic research project. Contributions are welcome after the initia
 
 ### Planned Improvements
 
-- [ ] Metrics tracking system for academic validation
-- [ ] User study protocol and data collection tools
-- [ ] Automatic threshold adaptation based on user corrections
-- [x] ~~Lightweight classifier training~~ **COMPLETED** (logistic regression on embeddings)
+- [x] ~~Metrics tracking system for academic validation~~ **COMPLETED** (full P/R/F1 dashboard with CSV export, v0.3.7)
+- [x] ~~Automatic threshold adaptation based on user corrections~~ **COMPLETED** (FP/FN-driven ±0.02 adaptation with popup toggle, v0.3.6)
+- [x] ~~Lightweight classifier training~~ **COMPLETED** (logistic regression on embeddings, v0.3.0)
+- [ ] User study protocol and data collection (participants needed)
+- [ ] Qualitative decision history log (per-video audit trail)
+- [ ] Full import/export for backups (metrics CSV is partial)
 - [ ] Video description inclusion in embeddings
-- [ ] Export/import functionality for backups
-- [ ] Decision history logging and review
 - [ ] Multi-platform support (Firefox, Safari)
 - [ ] A/B testing framework
 - [ ] Performance benchmarking suite
@@ -637,4 +671,4 @@ For questions, feedback, or collaboration inquiries:
 
 **Built for better digital experiences and user autonomy**
 
-*Last Updated: February 17, 2026*
+*Last Updated: February 19, 2026 — v0.3.7*

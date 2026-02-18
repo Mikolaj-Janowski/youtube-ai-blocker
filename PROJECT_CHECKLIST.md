@@ -1,8 +1,8 @@
 # AI-Powered Browser Extension - Project Checklist
 
 **Project:** Intelligent Web Content Filtering for YouTube  
-**Date:** February 10, 2026  
-**Status:** Core Implementation Complete, Evaluation Phase Pending
+**Date:** February 19, 2026  
+**Status:** Core Implementation + Evaluation System Complete (~97%)
 
 ---
 
@@ -60,6 +60,9 @@
   - Clear embedding cache button
   - Color-coded buttons and sections
   - Custom scrollbars
+  - **Adaptive Threshold section** with iOS-style toggle switch
+  - Adaptive status display (off / active-waiting / adapted N times)
+  - **Analytics section** with "View Metrics Dashboard" button
 - [x] **Placeholder UI** for blocked content
   - Shows which item triggered the block
   - Displays similarity score and/or classifier probability
@@ -81,6 +84,13 @@
 - [x] **Classifier storage** (`ytd_ai_classifier_v2`, `ytd_ai_classifier_enabled_v2`)
   - Trained model weights and bias
   - Enable/disable state
+- [x] **Adaptive threshold storage** (`ytd_ai_auto_threshold_v2`, `ytd_ai_adapt_stats_v2`)
+  - On/off toggle state
+  - Adaptation statistics (`{up: N, down: N}`)
+- [x] **Metrics storage** (`ytd_ai_metrics_v2`)
+  - TP, FP, FN, manual block counters
+  - Session start timestamp
+  - Snapshot history array (up to 100 entries)
 - [x] **Embedding cache** (`ytd_ai_cache_v2`)
   - Persistent cache: text → embedding array
   - Runtime cache: text → Float32Array (in-memory)
@@ -180,11 +190,15 @@
   - Dataset balancing to prevent bias
 - [x] **Hybrid filtering** - Combines similarity matching + classifier predictions
 - [x] **Allowed items list** - Permanent allow list via "Show this" button
-- [ ] ⚠️ **Automatic threshold adaptation** - Not yet implemented
-  - Could track false positive/negative rates
-  - Adjust threshold automatically over time
+- [x] **Automatic threshold adaptation** - ✅ Implemented (v0.3.6)
+  - Detects **false positives**: "Show this" on auto-blocked video → raises threshold (+0.02)
+  - Detects **false negatives**: manual block of content similar to existing blocked items → lowers threshold (−0.02)
+  - Toggle on/off via iOS-style switch in popup
+  - Step size 0.02, clamped to range [0.30, 0.95]
+  - Adaptation stats tracked and displayed in popup
+  - Slider auto-updates in popup when threshold is adapted
 
-**Status:** ✅ Advanced hybrid system operational, auto-adaptation pending
+**Status:** ✅ Complete adaptive learning system with auto-threshold and hybrid classifier
 
 ### 3.4 Privacy ✅
 - [x] **All data stays local** - Chrome Local Storage
@@ -196,19 +210,31 @@
 
 ---
 
-## 4. LEARNING VERIFICATION ⚠️ NEEDS IMPLEMENTATION
+## 4. LEARNING VERIFICATION ✅ IMPLEMENTED
 
-### 4.1 Quantitative Metrics ❌
-- [ ] **Tracking system** - Log correct vs incorrect predictions
-- [ ] **Precision calculation** - TP / (TP + FP)
-- [ ] **Recall calculation** - TP / (TP + FN)
-- [ ] **F1 score calculation** - Harmonic mean of precision/recall
-- [ ] **False positive tracking** - User clicks "Show this"
-- [ ] **False negative tracking** - User manually blocks similar content
-- [ ] **Longitudinal comparison** - Initial vs later performance metrics
-- [ ] **Metrics dashboard** - Display statistics to user
+### 4.1 Quantitative Metrics ✅
+- [x] **Tracking system** - Event-driven logger in `content_script.js`
+  - `auto_blocked`: every automatic hide (TP+FP pool)
+  - `false_positive`: "Show this" on auto-blocked video
+  - `false_negative`: manual block with ≥40% sim to existing
+  - `manual_blocked`: every manual "Block" button click
+- [x] **Precision calculation** - `TP / (TP + FP)` where `TP = auto_blocked − FP`
+- [x] **Recall calculation** - `TP / (TP + FN)`
+- [x] **F1 score calculation** - `2 × P × R / (P + R)`, harmonic mean
+- [x] **False positive tracking** - Recorded on "Show this" for auto-blocked videos
+- [x] **False negative tracking** - Recorded on manual block when sim ≥ 0.40 to existing blocked items but < threshold
+- [x] **Longitudinal comparison** - Performance snapshots every 10 auto-blocks; early vs recent avg F1 comparison
+- [x] **Metrics dashboard** - Full-page analytics tab (`dist/metrics.html`)
+  - Overview stat cards (Auto-Blocked, TP, FP, FN)
+  - Animated precision/recall/F1 progress bars
+  - SVG line chart of P/R/F1 over time
+  - Early vs recent F1 comparison with improvement indicator
+  - Snapshot history table with color-coded badges
+  - Export CSV button
+  - Reset metrics button
+  - Auto-refreshes in real-time via `chrome.storage.onChanged`
 
-**Status:** ❌ Not implemented - Critical for academic validation
+**Status:** ✅ Fully implemented — quantitative validation system operational
 
 ### 4.2 Qualitative Verification ❌
 - [ ] **User testing protocol** - Structured testing methodology
@@ -220,14 +246,14 @@
 
 **Status:** ❌ Not implemented - Required for research paper
 
-### 4.3 Current Logging Capabilities ✅ (Partial)
+### 4.3 Current Logging Capabilities ✅
 - [x] **Console logging** - Debug information about decisions
 - [x] **Placeholder shows matched item** - Transparency about blocking reason
 - [x] **Similarity score displayed** - User can see confidence level
-- [ ] ⚠️ **Persistent decision log** - History not saved
-- [ ] ⚠️ **Export functionality** - Can't export data for analysis
+- [x] **Persistent metrics history** - Snapshot array stored in `ytd_ai_metrics_v2`; up to 100 snapshots retained
+- [x] **Export functionality** - CSV export of all snapshots from the metrics dashboard
 
-**Status:** ⚠️ Basic transparency, needs structured logging
+**Status:** ✅ Structured metrics logging and CSV export implemented
 
 ---
 
@@ -291,71 +317,60 @@
 
 ## OVERALL PROJECT STATUS
 
-### ✅ COMPLETED (85%)
+### ✅ COMPLETED (~97%)
 1. **Prototype Development** - Fully functional Chrome extension with professional UI
 2. **Network Selection** - MiniLM-L6-v2 successfully integrated
 3. **Core Training Plan** - Embedding-based filtering operational
-4. **Classifier Training** - ✅ Hybrid mode with logistic regression implemented
+4. **Classifier Training** - Hybrid mode with logistic regression implemented
 5. **Privacy Architecture** - Local-first, user-controlled system
 6. **Performance Optimization** - Production-ready efficiency
 7. **User Interface** - Professional design with icons, tooltips, and color-coding
+8. **Automatic Threshold Adaptation** - ✅ Implemented (v0.3.6) — adapts ±0.02 on FP/FN events
+9. **Quantitative Metrics System** - ✅ Implemented (v0.3.7) — full dashboard with P/R/F1, longitudinal chart, CSV export
 
-### ⚠️ PARTIALLY COMPLETE (10%)
-1. **Advanced Learning** - Classifier trains manually, not automatic
-2. **Logging** - Decision transparency in placeholders, needs structured history
-3. **Documentation** - Code commented, README complete, academic validation pending
+### ⚠️ PARTIALLY COMPLETE (~2%)
+1. **Documentation** - Code commented, user docs complete; academic paper/thesis pending
 
-### ❌ NOT STARTED (5%)
-1. **Verification Metrics** - No quantitative tracking system
-2. **User Studies** - No formal testing protocol or participants
-3. **Automatic Threshold Adaptation** - Manual adjustment only
-4. **Decision History Export** - No persistent logging or export
+### ❌ NOT STARTED (~1%)
+1. **User Studies** - No formal testing protocol or external participants yet
 
 ---
 
 ## PRIORITY RECOMMENDATIONS
 
 ### HIGH PRIORITY (Required for Academic Project)
-1. **Implement metrics tracking system** - Essential for validation
-   - Add decision logger to content script
-   - Track TP, FP, TN, FN
-   - Calculate precision, recall, F1 over time
-   - Export functionality for analysis
-
-2. **Create user testing protocol** - Core requirement
+1. **Conduct user study** - Core remaining requirement
    - Design study methodology
    - Recruit 10-20 participants
-   - Collect quantitative and qualitative data
-   - Analyze results for paper
+   - Collect quantitative data using the built-in metrics dashboard
+   - Export CSV snapshots per participant for analysis
+   - Post-session interviews for qualitative evaluation
 
-3. **Complete README.md** - Professional presentation
-   - Project overview
-   - Installation instructions
-   - Usage guide
-   - Architecture explanation
-   - Academic context
+2. **Write academic paper/thesis sections**
+   - Leverage the metrics dashboard data directly for results section
+   - Document longitudinal P/R/F1 progression in evaluation chapter
+   - Compare early vs recent performance using the dashboard's comparison widget
 
-### MEDIUM PRIORITY (Enhances Project)
-4. **Implement automatic threshold adaptation**
-   - Track user corrections (false positives/negatives)
-   - Adjust threshold dynamically
-   - Demonstrates true "learning"
+### MEDIUM PRIORITY (Nice to Have)
+3. **Add decision history UI** (qualitative review)
+   - View a scrollable log of what was auto-blocked and when
+   - Let user correct past decisions inline
+   - Complements the quantitative metrics dashboard
 
-5. **Add decision history UI**
-   - View past auto-blocking decisions
-   - Review and correct mistakes
-   - Export for analysis
+4. **Video descriptions** - Currently only uses title + channel
+   - Including description snippets could improve recall
 
-6. ~~**Implement lightweight classifier**~~ ✅ **COMPLETED**
-   - ✅ Logistic regression on embeddings
-   - ✅ Trains on user feedback (10 blocked + 20 "don't block")
-   - ✅ Hybrid mode combining similarity + classifier
+### COMPLETED ✅
+- ~~**Implement metrics tracking system**~~ → ✅ Full dashboard with P/R/F1, longitudinal chart, CSV export (v0.3.7)
+- ~~**Implement automatic threshold adaptation**~~ → ✅ FP/FN-driven ±0.02 adaptation with popup toggle (v0.3.6)
+- ~~**Implement lightweight classifier**~~ → ✅ Logistic regression, 10 blocked + 20 "don't block" (v0.3.0)
+- ~~**Complete README.md**~~ → ✅ Comprehensive documentation with architecture, usage guide, academic context
 
-### LOW PRIORITY (Nice to Have)
-7. **Video descriptions** - Currently only uses title + channel
-8. **Architecture diagrams** - Visual documentation
-9. **A/B testing framework** - Compare different approaches
-10. **Multi-language support** - Internationalization
+### LOW PRIORITY
+5. **Architecture diagrams** - Visual documentation for paper
+6. **A/B testing framework** - Compare similarity-only vs hybrid approaches
+7. **Multi-language support** - Internationalization
+8. **Multi-platform support** - Firefox / Safari portability
 
 ---
 
@@ -364,39 +379,39 @@
 1. **Model loading in offscreen document** - Works but complex architecture
 2. **No error UI** - Errors only logged to console
 3. **Cache can grow unbounded** - No cache size limit or LRU eviction
-4. **No backup/restore** - User data not exportable for backup
+4. **No backup/restore** - User data not exportable for backup (metrics CSV export is partial)
 5. **Single similarity threshold** - Same for all contexts (classifier uses same threshold)
 6. **No category-based filtering** - All content treated uniformly
 7. **Classifier retrains from scratch** - No incremental learning (acceptable for small datasets)
-8. **No decision history** - Blocking decisions not logged persistently
+8. **No qualitative decision history** - Only quantitative counters; no per-decision log
 
 ---
 
 ## CONCLUSION
 
-**The core prototype is complete and functional.** The extension successfully:
-- Filters YouTube content based on user preferences
-- Uses state-of-the-art AI (MiniLM-L6-v2) for semantic understanding
+**The core prototype and evaluation infrastructure are both complete.** The extension:
+- Filters YouTube content using state-of-the-art AI (MiniLM-L6-v2) for semantic understanding
 - Implements hybrid filtering (similarity matching + logistic regression classifier)
-- Learns from user feedback (blocked items + "don't block" training data)
-- Maintains permanent allow list for user control
+- Learns from user feedback (blocked items + "don't block" training data + allow list)
+- Automatically adapts the sensitivity threshold based on FP/FN user corrections
+- Tracks precision, recall, F1 over time with a full-featured analytics dashboard
+- Exports performance data to CSV for academic analysis
 - Operates entirely locally for privacy
-- Provides transparent, reversible filtering decisions with professional UI
+- Provides transparent, reversible decisions with a professional icon-based UI
 
-**What remains is primarily evaluation:**
-- Quantitative metrics system for academic validation
-- User studies to demonstrate effectiveness
-- Decision history logging and export
-- Optional advanced features (auto-adaptation)
+**What remains is the human study component:**
+- Recruit participants for a user study
+- Collect per-session metric snapshots using the built-in CSV export
+- Write up results for the academic paper/thesis
 
-**This is an excellent foundation for a research project or thesis.** The technical implementation demonstrates strong software engineering and ML integration skills. With proper evaluation and documentation, this could contribute meaningfully to the fields of personalized content filtering, user-in-the-loop ML, and privacy-preserving AI.
+**This is a production-ready research prototype.** The technical implementation demonstrates strong software engineering and ML integration skills, with a complete evaluation system ready for structured user studies.
 
 ---
 
 **Next Steps:**
-1. Start with metrics implementation (highest priority for validation)
-2. Design user study protocol
-3. Write comprehensive README
-4. Collect data from real usage
+1. Design user study protocol and recruit participants
+2. Conduct study (2-4 weeks); have participants use the extension naturally
+3. Collect CSV exports from metrics dashboard for quantitative analysis
+4. Conduct post-study interviews for qualitative evaluation
 5. Analyze and document results for academic paper
 

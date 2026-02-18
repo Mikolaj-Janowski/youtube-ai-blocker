@@ -34,6 +34,10 @@ const ADAPT_FLOOR = 0.30;      // Minimum possible threshold
 const ADAPT_CEILING = 0.95;    // Maximum possible threshold
 const ADAPT_FN_MIN_SIM = 0.40; // Min similarity to existing blocked items to trigger FN detection
 
+// Quantitative metrics tracking
+const METRICS_KEY = "ytd_ai_metrics_v2";
+const SNAPSHOT_INTERVAL = 10; // Take a performance snapshot every N auto-block events
+
 /* ---------------- Globals ---------------- */
 let extractor = null; // Not used - delegated to background worker
 let blockedItems = []; // {id, title, channel, embedding}
@@ -48,6 +52,10 @@ let classifier = new LogisticRegressionClassifier(); // logistic regression clas
 let classifierEnabled = false; // whether to use classifier in predictions
 let autoThresholdEnabled = false; // whether to auto-adapt threshold from feedback
 let adaptStats = { up: 0, down: 0 }; // track how many times threshold was adapted
+let metricsData = {             // quantitative performance metrics
+  totalAutoBlocked: 0, falsePositives: 0, falseNegatives: 0,
+  totalManualBlocked: 0, sessionStart: Date.now(), history: []
+};
 
 let embedQueue = []; // queue of {text, resolve}
 
@@ -78,7 +86,7 @@ function saveToStorage(keys) {
 async function loadState() {
   const data = await new Promise(res => chrome.storage.local.get([
     STORAGE_KEY, CACHE_KEY, NEGATIVE_KEY, ALLOWED_KEY, THRESHOLD_KEY, MODE_KEY, BACKEND_KEY,
-    CLASSIFIER_KEY, CLASSIFIER_ENABLED_KEY, AUTO_THRESHOLD_KEY, ADAPT_STATS_KEY
+    CLASSIFIER_KEY, CLASSIFIER_ENABLED_KEY, AUTO_THRESHOLD_KEY, ADAPT_STATS_KEY, METRICS_KEY
   ], res));
   
   blockedItems = data[STORAGE_KEY] || [];
@@ -91,6 +99,10 @@ async function loadState() {
   classifierEnabled = data[CLASSIFIER_ENABLED_KEY] || false;
   autoThresholdEnabled = data[AUTO_THRESHOLD_KEY] || false;
   adaptStats = data[ADAPT_STATS_KEY] || { up: 0, down: 0 };
+  metricsData = data[METRICS_KEY] || {
+    totalAutoBlocked: 0, falsePositives: 0, falseNegatives: 0,
+    totalManualBlocked: 0, sessionStart: Date.now(), history: []
+  };
   
   // Load classifier if it exists
   if (data[CLASSIFIER_KEY]) {
@@ -346,6 +358,67 @@ function adaptThreshold(direction) {
       [ADAPT_STATS_KEY]: { ...adaptStats }
     });
   }
+}
+
+/* ---------------- Quantitative Metrics Tracking ---------------- */
+function takeMetricsSnapshot() {
+  const auto = metricsData.totalAutoBlocked;
+  const fp = metricsData.falsePositives;
+  const fn = metricsData.falseNegatives;
+  const tp = Math.max(0, auto - fp);
+
+  const precision = auto > 0 ? tp / auto : null;
+  const recall = (tp + fn) > 0 ? tp / (tp + fn) : null;
+  const f1 = (precision !== null && recall !== null && (precision + recall) > 0)
+    ? 2 * precision * recall / (precision + recall)
+    : null;
+
+  const snapshot = {
+    timestamp: Date.now(),
+    totalAutoBlocked: auto,
+    falsePositives: fp,
+    falseNegatives: fn,
+    threshold,
+    precision,
+    recall,
+    f1
+  };
+
+  metricsData.history = metricsData.history || [];
+  metricsData.history.push(snapshot);
+
+  // Cap history at 100 snapshots to prevent unbounded growth
+  if (metricsData.history.length > 100) {
+    metricsData.history = metricsData.history.slice(-100);
+  }
+
+  console.log(`[Metrics] Snapshot #${metricsData.history.length}: ` +
+    `P=${precision !== null ? (precision*100).toFixed(1) : 'N/A'}% ` +
+    `R=${recall !== null ? (recall*100).toFixed(1) : 'N/A'}% ` +
+    `F1=${f1 !== null ? (f1*100).toFixed(1) : 'N/A'}%`);
+}
+
+function recordMetricEvent(event) {
+  switch (event) {
+    case 'auto_blocked':
+      metricsData.totalAutoBlocked++;
+      if (metricsData.totalAutoBlocked % SNAPSHOT_INTERVAL === 0) {
+        takeMetricsSnapshot();
+      }
+      break;
+    case 'false_positive':
+      metricsData.falsePositives++;
+      break;
+    case 'false_negative':
+      metricsData.falseNegatives++;
+      break;
+    case 'manual_blocked':
+      metricsData.totalManualBlocked++;
+      break;
+    default:
+      break;
+  }
+  saveToStorage({ [METRICS_KEY]: metricsData });
 }
 
 /* ---------------- Determine blocking (Hybrid Mode) ---------------- */
@@ -658,19 +731,21 @@ function attachButtonsToTile(tile) {
       const textForEmbed = `${titleText} — ${channelText}`;
       const emb = await embed(textForEmbed);
       
-      // Auto-threshold: detect false negatives (user blocking content similar to existing but not auto-caught)
-      if (autoThresholdEnabled && blockedItems.length > 0) {
+      // Auto-threshold FN detection + metrics tracking
+      if (blockedItems.length > 0) {
         let maxSim = 0;
         for (const b of blockedItems) {
           const sim = cosineSimilarity(emb, Float32Array.from(b.embedding));
           if (sim > maxSim) maxSim = sim;
         }
-        // If somewhat similar to existing blocked items but wasn't auto-blocked → threshold too high
+        // If somewhat similar to existing blocked items but wasn't auto-blocked → false negative
         if (maxSim >= ADAPT_FN_MIN_SIM && maxSim < threshold) {
-          console.log(`[Auto-Threshold] FN detected: max sim ${maxSim.toFixed(2)} < threshold ${threshold.toFixed(2)} → lowering threshold`);
+          console.log(`[Metrics/Auto-Threshold] FN detected: max sim ${maxSim.toFixed(2)} < threshold ${threshold.toFixed(2)}`);
+          recordMetricEvent('false_negative');
           adaptThreshold('down');
         }
       }
+      recordMetricEvent('manual_blocked');
       
       const id = addBlockedItem(titleText, channelText, emb);
       // hide tile (wasAutoBlocked = false since user manually blocked)
@@ -742,9 +817,10 @@ function hideTileWithPlaceholder(tile, matchedId, matchedTitle, matchedChannel, 
     console.log("Video info extracted BEFORE placeholder:", titleText, "—", channelText);
     console.log("Matched info from placeholder:", matchedTitle, "—", matchedChannel);
 
-    // Auto-threshold: "Show this" on an auto-blocked video is a false positive → raise threshold
+    // Auto-threshold + metrics: "Show this" on an auto-blocked video is a false positive
     if (wasAutoBlocked) {
-      console.log("[Auto-Threshold] FP detected: user clicked 'Show this' on auto-blocked video → raising threshold");
+      console.log("[Metrics/Auto-Threshold] FP detected: user clicked 'Show this' on auto-blocked video");
+      recordMetricEvent('false_positive');
       adaptThreshold('up');
     }
 
@@ -783,6 +859,7 @@ async function scanAndMaybeHideTile(tile) {
     // ALWAYS go through shouldBlockText - it checks allowed list first
     const res = await shouldBlockText(titleText, channelText);
     if (res.block) {
+      recordMetricEvent('auto_blocked');
       // Find the matched item for display purposes
       const matched = blockedItems.find(b => b.title === titleText && b.channel === channelText);
       if (matched) {

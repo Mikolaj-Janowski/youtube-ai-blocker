@@ -33,6 +33,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   const retrainClassifierBtn = document.getElementById("retrainClassifier");
   const autoThresholdEnabledCheckbox = document.getElementById("autoThresholdEnabled");
   const adaptiveStatusDiv = document.getElementById("adaptiveStatus");
+  const openDashboardBtn = document.getElementById("openDashboard");
 
   // load settings
   chrome.storage.local.get([
@@ -121,6 +122,10 @@ document.addEventListener("DOMContentLoaded", async () => {
     chrome.storage.local.set({ [CACHE_KEY]: {}, [NEGATIVE_KEY]: [] }, () => {
       alert("Cache cleared.");
     });
+  });
+
+  openDashboardBtn.addEventListener("click", () => {
+    chrome.tabs.create({ url: chrome.runtime.getURL("dist/metrics.html") });
   });
 
   autoThresholdEnabledCheckbox.addEventListener("change", () => {
