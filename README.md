@@ -631,9 +631,9 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 ```
 @misc{youtube-ai-blocker-2026,
   title={AI-Powered Browser Extension for Intelligent Web Content Filtering},
-  author={[Your Name]},
+  author={[Mikołaj Janowski]},
   year={2026},
-  howpublished={\url{https://github.com/yourusername/youtube-ai-blocker}}
+  howpublished={\url{https://github.com/Mikolaj-Janowski/youtube-ai-blocker}}
 }
 ```
 
@@ -653,16 +653,17 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 For questions, feedback, or collaboration inquiries:
 
-- **GitHub Issues**: [https://github.com/yourusername/youtube-ai-blocker/issues](https://github.com/yourusername/youtube-ai-blocker/issues)
-- **Email**: your.email@university.edu
-- **Research Group**: [Your Lab Website]
+- **GitHub Issues**: [https://github.com/Mikolaj-Janowski/youtube-ai-blocker/issues](https://github.com/Mikolaj-Janowski/youtube-ai-blocker/issues)
+- **Email**: 247024@edu.p.lodz.pl
 
 ---
 
 ## Links
 
-- [Project Repository](https://github.com/yourusername/youtube-ai-blocker)
+- [Project Repository](https://github.com/Mikolaj-Janowski/youtube-ai-blocker)
 - [Detailed Checklist](PROJECT_CHECKLIST.md)
+- [Code Documentation & API Reference](CODE_DOCUMENTATION.md)
+- [Feature Changelog](WHATS_NEW_v0.3.0.md)
 - [Chrome Extension Documentation](https://developer.chrome.com/docs/extensions/)
 - [Sentence-Transformers](https://www.sbert.net/)
 - [Xenova/transformers](https://huggingface.co/docs/transformers.js)
