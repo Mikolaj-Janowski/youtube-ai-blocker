@@ -646,7 +646,7 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - **Hugging Face / Xenova**: Model hosting, distribution, and the Transformers.js browser inference library
 - **Sentence-Transformers (Reimers & Gurevych, 2019)**: Sentence embedding methodology and model fine-tuning
 - **Google Chrome Extensions Team**: Manifest V3 documentation and offscreen document API
-- **Claude (Anthropic)**: Assistance with code debugging and documentation throughout the development of this project
+- **Claude (Anthropic)**: Assistance with code implementation, debugging, and documentation throughout the development of this project
 
 ---
 
