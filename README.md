@@ -641,11 +641,12 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ## Acknowledgments
 
-- **Xenova/transformers**: Outstanding browser-based ML inference library
-- **Sentence-Transformers**: High-quality embedding models
-- **Hugging Face**: Model hosting and distribution
-- **OpenAI**: Transformer architecture inspiration
-- **Chrome Extensions Team**: Excellent developer documentation
+- **Vaswani et al. (2017)**: Original Transformer architecture ("Attention is All You Need"), the foundational research underpinning all models used in this project
+- **Microsoft Research**: MiniLM-L6-v2 model development and knowledge distillation
+- **Hugging Face / Xenova**: Model hosting, distribution, and the Transformers.js browser inference library
+- **Sentence-Transformers (Reimers & Gurevych, 2019)**: Sentence embedding methodology and model fine-tuning
+- **Google Chrome Extensions Team**: Manifest V3 documentation and offscreen document API
+- **Claude (Anthropic)**: Assistance with code implementation, debugging, and documentation throughout the development of this project
 
 ---
 
